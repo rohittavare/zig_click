@@ -8,6 +8,7 @@
 //! or an alphanumeric character prefixed by a single dash (short flag)
 
 const std = @import("std");
+const tokenizer = @import("tokenizer.zig");
 
 const FlagParserError = error{
     IncorrectSpecificationFormat,
@@ -293,3 +294,137 @@ test "parse_token_fail" {
         }
     }
 }
+
+const OptionPointer = struct {
+    // point this option to the tuple field index
+    idx: usize,
+    // if a boolean flag, what value it represents
+    bool_v: ?bool,
+};
+
+/// provides the following information for our parser:
+/// - expected output shape
+/// - default values for output field
+/// - registered long & short options, arguments and the field index they refer to
+fn ParserConfig(comptime ouT: type) type {
+    return struct {
+        defaults: ouT,
+        long_flags: std.StaticStringMap(OptionPointer),
+        // since short flags are single alphanumeric character
+        // there are only 62 possible options
+        short_flags: *const [62]?OptionPointer,
+        arguments: []const usize,
+    };
+}
+
+const ArgumentParserError = error{
+    UnrecognizedOption,
+    UnexpectedArgument,
+    MissingArgument,
+    InvalidArgument,
+    InvalidOption,
+};
+
+/// long flags can be expressed by themselves or with their value
+/// this helps us extract the flag and optional value portions separately
+fn unpackLongFlagToken(token: []const u8) struct { []const u8, ?[]const u8 } {
+    if (std.mem.findScalar(u8, token, '=')) |i| {
+        return .{ token[0..i], token[i + 1 ..] };
+    }
+    return .{ token, null };
+}
+
+/// helps us pack our 62 possible short flag names
+/// into indices of a 62 element array
+fn charToIdx(c: u8) ?usize {
+    switch (c) {
+        'a'...'z' => return @intCast(c),
+        'A'...'Z' => return @intCast(c - 'A' + 26),
+        '0'...'9' => return @intCast(c - '0' + 52),
+        else => return null,
+    }
+}
+
+/// parses tokens from our tokenizer based on the provided config
+/// does not check if all tokens are consumed, as we may want to chain
+/// multiple parsers together down the line. caller can use `itr.next() == null` to check themself
+fn parseArguments(comptime ouT: type, cfg: ParserConfig(ouT), itr: tokenizer.Tokenizer) !ouT {
+    var arg_idx: usize = 0;
+    var tokens: [@typeInfo(ouT).@"struct".field_names.len]?[]const u8 = @splat(null);
+    var result = cfg.defaults;
+    while (itr.next()) |token| {
+        if (std.mem.eql(u8, token, "--")) {
+            // special `--` argument - not sure what do with it yet
+        } else if (std.mem.startsWith(u8, token, "--")) {
+            // long flag - unpack flag name & value + validate flag name
+            const flag, const maybe_value = unpackLongFlagToken(token);
+            const flag_name = extract_long_flag_name(flag) catch return ArgumentParserError.InvalidOption;
+            if (cfg.long_flags.get(flag_name)) |ptr| {
+                if (ptr.bool_v) |value| {
+                    // if it is a boolean flag, we should expect no corresponding ooption argument
+                    if (maybe_value) |_| return ArgumentParserError.UnexpectedArgument;
+                    tokens[ptr.idx] = if (value) "true" else "false";
+                } else {
+                    // use the packaged value if provided, else use the next token as our option argument
+                    tokens[ptr.idx] = maybe_value orelse itr.next() orelse ArgumentParserError.MissingArgument;
+                }
+            } else return ArgumentParserError.UnrecognizedOption;
+        } else if (std.mem.startsWith(u8, token, "-") and token.len > 1) {
+            // short flag - multiple short flags can be grouped together in a single token
+            for (token[1..], 1..) |c, i| {
+                if (charToIdx(c)) |idx| {
+                    if (cfg.short_flags[idx]) |ptr| {
+                        if (ptr.bool_v) |value| {
+                            tokens[ptr.idx] = if (value) "true" else "false";
+                        } else {
+                            // short flags requiring a parameter either
+                            // - use the remaining token as the value
+                            // - use the next token as the value (if at the end)
+                            const value = token[i + 1 ..];
+                            tokens[ptr.idx] = if (value.len > 0) value else itr.next() orelse ArgumentParserError.MissingArgument;
+                            break;
+                        }
+                    } else return ArgumentParserError.UnrecognizedOption;
+                } else return ArgumentParserError.InvalidOption;
+            }
+        } else {
+            // argument - find the next argument we need to supply and place to token in the appropriate index
+            if (arg_idx > cfg.arguments.len) return ArgumentParserError.UnexpectedArgument;
+            tokens[cfg.arguments[arg_idx]] = token;
+            arg_idx += 1;
+        }
+    }
+    if (arg_idx < cfg.arguments.len) return ArgumentParserError.MissingArgument;
+    inline for (@typeInfo(ouT).@"struct".field_names, @typeInfo(ouT).@"struct".field_types, tokens) |n, t, maybe_token| {
+        if (maybe_token) |token| @field(result, n) = parseToken(t, token) orelse return ArgumentParserError.InvalidArgument;
+    }
+    return result;
+}
+
+// parsing different data types
+// parsing multiple positional arguments
+// parsing a long option
+// - boolean
+// - conjoined value
+// - separate value
+// parsing a shor option
+// - multi-flag token
+// - conjoined value
+// - separate value
+// `--` token
+// handle default value
+test "arg_parser" {}
+
+// missing positional argument
+// extra positional argument
+// long flags
+// - invalid flag
+// - unrecognized flag
+// - argument for boolean flag
+// - missing argument
+// short flags
+// - invalid flag
+// - unrecognized flag
+// - missing argument
+// type parsing failure
+test "arg_parser_failure" {}

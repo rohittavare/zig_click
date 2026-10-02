@@ -14,7 +14,7 @@ const std = @import("std");
 /// instead we construct the proper tokens in a second buffer character-by-character.
 /// Since the returned tokens could be used at any point during the program's lifetime, we cannot overwrite
 /// tokens we previously returned, so we have no choice but to maintain all tokens side by side until deconstruction-time
-const StringIterator = struct {
+pub const StringIterator = struct {
     str: []const u8,
     buf: []u8,
     pos: usize = 0,
@@ -81,7 +81,7 @@ const StringIterator = struct {
 
 /// Interface to abstract the actual source of command line argument tokens
 /// we can either supply this from `std.process.Init.minimal` or from a string e.g. during testing
-const Tokenizer = union(enum) {
+pub const Tokenizer = union(enum) {
     argsIterator: *std.process.Args.Iterator,
     stringIterator: *StringIterator,
 
