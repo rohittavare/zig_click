@@ -29,6 +29,10 @@ pub const StringIterator = struct {
         allocator.free(self.buf);
     }
 
+    pub fn asTokenizer(self: *StringIterator) Tokenizer {
+        return Tokenizer{ .stringIterator = self };
+    }
+
     pub fn next(self: *StringIterator) ?[]const u8 {
         if (self.pos == self.str.len) return null;
         const token_start = self.buf_pos;
@@ -60,7 +64,7 @@ pub const StringIterator = struct {
                 } else switch (c) {
                     '\\' => escaped = true,
                     '"' => quoted = true,
-                    ' ' => {
+                    ' ', '\n' => {
                         if (token_start == self.buf_pos) continue;
                         break :next_token_start (i + 1);
                     },
