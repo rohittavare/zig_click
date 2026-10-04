@@ -99,24 +99,24 @@ test "append_to_slice" {
 }
 
 /// produces a new array based on an existing array which sets the value of the array at a particular index
-pub inline fn setSliceComptime(comptime T: type, comptime arr: []const T, comptime i: usize, comptime setVal: T) []const T {
+pub inline fn setArrComptime(comptime T: type, comptime N: usize, comptime arr: *const [N]T, comptime i: usize, comptime setVal: T) *const [N]T {
     return &(arr[0..i].* ++ [1]T{setVal} ++ arr[i + 1 ..].*);
 }
 
 test "set_array" {
     const expected = [_]u8{ 'h', 'e', 'l', 'l', 'o', '-', 'w', 'o', 'r', 'l', 'd', '.' };
     const initial = [_]u8{ 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', '.' };
-    try std.testing.expectEqualSlices(u8, &expected, setSliceComptime(u8, &initial, 5, '-'));
+    try std.testing.expectEqualSlices(u8, &expected, setArrComptime(u8, 12, &initial, 5, '-'));
 }
 
 test "set_array_index_end" {
     const expected = [_]u8{ 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', '!' };
     const initial = [_]u8{ 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', '.' };
-    try std.testing.expectEqualSlices(u8, &expected, setSliceComptime(u8, &initial, 11, '!'));
+    try std.testing.expectEqualSlices(u8, &expected, setArrComptime(u8, 12, &initial, 11, '!'));
 }
 
 test "set_array_index_begin" {
     const expected = [_]u8{ 'y', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', '.' };
     const initial = [_]u8{ 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', '.' };
-    try std.testing.expectEqualSlices(u8, &expected, setSliceComptime(u8, &initial, 0, 'y'));
+    try std.testing.expectEqualSlices(u8, &expected, setArrComptime(u8, 12, &initial, 0, 'y'));
 }
