@@ -364,7 +364,8 @@ fn charToIdx(c: u8) ?usize {
 /// - cannot parse negative values to arguments. the leading `-` categorizes
 ///   the token as a short flag (this is similar behavior if you tried with `ls` e.g. `ls -3`)
 ///   recommend to use options instead
-fn parseArguments(comptime ouT: type, cfg: ParserConfig(ouT), itr: tokenizer.Tokenizer) !ouT {
+/// - `--help` is a special case flag that will return `null`
+fn parseArguments(comptime ouT: type, cfg: ParserConfig(ouT), itr: tokenizer.Tokenizer) !?ouT {
     var arg_idx: usize = 0;
     var tokens: [@typeInfo(ouT).@"struct".field_names.len]?[]const u8 = @splat(null);
     var result = cfg.defaults;
@@ -376,6 +377,7 @@ fn parseArguments(comptime ouT: type, cfg: ParserConfig(ouT), itr: tokenizer.Tok
             // long flag - unpack flag name & value + validate flag name
             const flag, const maybe_value = unpackLongFlagToken(token);
             const flag_name = extract_long_flag_name(flag) catch return ArgumentParserError.InvalidOption;
+            if (std.mem.eql(u8, flag_name, "help")) return null;
             if (cfg.long_flags.get(flag_name)) |ptr| {
                 if (ptr.bool_v) |value| {
                     // if it is a boolean flag, we should expect no corresponding ooption argument
@@ -431,6 +433,7 @@ fn parseArguments(comptime ouT: type, cfg: ParserConfig(ouT), itr: tokenizer.Tok
 // - [x] default values
 // - [x] no-exhaust setting
 // - [x] ignores `--` token
+// - [x] `--help` flag
 
 // check that multiple args and all data types can be handled
 test "arg_parser_datatypes" {
@@ -444,7 +447,7 @@ test "arg_parser_datatypes" {
     cfg.arguments = &[_]usize{ 0, 1, 2, 3, 4 };
 
     const expected: T = .{ true, false, "hello world", 123, 3.14 };
-    try std.testing.expectEqualDeep(expected, try parseArguments(T, cfg, itr.asTokenizer()));
+    try std.testing.expectEqualDeep(expected, (try parseArguments(T, cfg, itr.asTokenizer())).?);
 }
 
 // check that multiple args and all data types can be handled
@@ -459,7 +462,21 @@ test "arg_parser_ignore_token" {
     cfg.arguments = &[_]usize{0};
 
     const expected: T = .{"hello world"};
-    try std.testing.expectEqualDeep(expected, try parseArguments(T, cfg, itr.asTokenizer()));
+    try std.testing.expectEqualDeep(expected, (try parseArguments(T, cfg, itr.asTokenizer())).?);
+}
+
+test "arg_parser_help_flag" {
+    const allocator = std.testing.allocator;
+
+    const T = struct { []const u8 };
+    var cfg = ParserConfig(T).empty;
+    cfg.long_flags = std.StaticStringMap(OptionPointer).initComptime(.{.{ "long-flag", OptionPointer{ .idx = 0 } }});
+
+    // test separate & conjoined value cases
+    // boolean long flags tested in different case
+    var itr = try tokenizer.StringIterator.initAllocator(allocator, "--long-flag value --help");
+    defer itr.deinitAllocator(allocator);
+    try std.testing.expectEqualDeep(null, try parseArguments(T, cfg, itr.asTokenizer()));
 }
 
 test "arg_parser_long_flag" {
@@ -476,8 +493,8 @@ test "arg_parser_long_flag" {
     var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "--long-flag=value");
     defer itr2.deinitAllocator(allocator);
     const expected: T = .{"value"};
-    try std.testing.expectEqualDeep(expected, try parseArguments(T, cfg, itr1.asTokenizer()));
-    try std.testing.expectEqualDeep(expected, try parseArguments(T, cfg, itr2.asTokenizer()));
+    try std.testing.expectEqualDeep(expected, (try parseArguments(T, cfg, itr1.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected, (try parseArguments(T, cfg, itr2.asTokenizer())).?);
 }
 
 test "arg_parser_short_flag" {
@@ -496,8 +513,8 @@ test "arg_parser_short_flag" {
     var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "-tvalue");
     defer itr2.deinitAllocator(allocator);
     const expected: T = .{"value"};
-    try std.testing.expectEqualDeep(expected, try parseArguments(T, cfg, itr1.asTokenizer()));
-    try std.testing.expectEqualDeep(expected, try parseArguments(T, cfg, itr2.asTokenizer()));
+    try std.testing.expectEqualDeep(expected, (try parseArguments(T, cfg, itr1.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected, (try parseArguments(T, cfg, itr2.asTokenizer())).?);
 }
 
 test "arg_parser_multi_short_flag" {
@@ -522,15 +539,15 @@ test "arg_parser_multi_short_flag" {
     var itr3 = try tokenizer.StringIterator.initAllocator(allocator, "-ytvalue");
     defer itr3.deinitAllocator(allocator);
     const expected1: T = .{ true, "value" };
-    try std.testing.expectEqualDeep(expected1, try parseArguments(T, cfg, itr1.asTokenizer()));
-    try std.testing.expectEqualDeep(expected1, try parseArguments(T, cfg, itr2.asTokenizer()));
-    try std.testing.expectEqualDeep(expected1, try parseArguments(T, cfg, itr3.asTokenizer()));
+    try std.testing.expectEqualDeep(expected1, (try parseArguments(T, cfg, itr1.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected1, (try parseArguments(T, cfg, itr2.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected1, (try parseArguments(T, cfg, itr3.asTokenizer())).?);
 
     // - moving t after y should make it part of `-y` value
     var itr4 = try tokenizer.StringIterator.initAllocator(allocator, "-tyvalue");
     defer itr4.deinitAllocator(allocator);
     const expected2: T = .{ false, "yvalue" };
-    try std.testing.expectEqualDeep(expected2, try parseArguments(T, cfg, itr4.asTokenizer()));
+    try std.testing.expectEqualDeep(expected2, (try parseArguments(T, cfg, itr4.asTokenizer())).?);
 }
 
 test "arg_parser_bool_flag" {
@@ -551,12 +568,12 @@ test "arg_parser_bool_flag" {
     var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "--yes -t");
     defer itr1.deinitAllocator(allocator);
     const expected1: T = .{ true, true };
-    try std.testing.expectEqualDeep(expected1, try parseArguments(T, cfg, itr1.asTokenizer()));
+    try std.testing.expectEqualDeep(expected1, (try parseArguments(T, cfg, itr1.asTokenizer())).?);
 
     var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "--no -f");
     defer itr2.deinitAllocator(allocator);
     const expected2: T = .{ false, false };
-    try std.testing.expectEqualDeep(expected2, try parseArguments(T, cfg, itr2.asTokenizer()));
+    try std.testing.expectEqualDeep(expected2, (try parseArguments(T, cfg, itr2.asTokenizer())).?);
 }
 
 test "arg_parser_no_exhaust" {
@@ -575,13 +592,13 @@ test "arg_parser_no_exhaust" {
     var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "\"hello world\" -y");
     defer itr1.deinitAllocator(allocator);
     const expected1: T = .{ false, "hello world" };
-    try std.testing.expectEqualDeep(expected1, try parseArguments(T, cfg, itr1.asTokenizer()));
+    try std.testing.expectEqualDeep(expected1, (try parseArguments(T, cfg, itr1.asTokenizer())).?);
 
     // in this case, option is ignored because arguments are populated before it
     var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "-y \"hello world\"");
     defer itr2.deinitAllocator(allocator);
     const expected2: T = .{ true, "hello world" };
-    try std.testing.expectEqualDeep(expected2, try parseArguments(T, cfg, itr2.asTokenizer()));
+    try std.testing.expectEqualDeep(expected2, (try parseArguments(T, cfg, itr2.asTokenizer())).?);
 }
 
 // error test cases:
