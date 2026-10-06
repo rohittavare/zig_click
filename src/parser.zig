@@ -493,10 +493,10 @@ pub fn Parser(comptime ouT: type) type {
     };
 }
 
-const ExhaustiveParser = Parser(struct {}).empty.setExhaust(true);
-const NonExhaustiveParser = Parser(struct {}).empty.setExhaust(false);
+pub const ExhaustiveParser = Parser(struct {}).empty.setExhaust(true);
+pub const NonExhaustiveParser = Parser(struct {}).empty.setExhaust(false);
 
-const ParserError = error{
+pub const ParserError = error{
     UnrecognizedOption,
     UnexpectedArgument,
     MissingArgument,
