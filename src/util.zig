@@ -52,9 +52,19 @@ pub inline fn extendTupleType(comptime T: type, comptime appendT: type) type {
     return @Tuple(&(@typeInfo(T).@"struct".field_types.* ++ [1]type{appendT}));
 }
 
+pub inline fn prefixTupleType(comptime T: type, comptime prependT: type) type {
+    return @Tuple(&([1]type{prependT} ++ @typeInfo(T).@"struct".field_types.*));
+}
+
 test "test_extend_tuple_type" {
     const expected = struct { bool, usize, []const u8 };
     const actual = extendTupleType(struct { bool, usize }, []const u8);
+    try std.testing.expectEqual(expected, actual);
+}
+
+test "test_prefix_tuple_type" {
+    const expected = struct { bool, usize, []const u8 };
+    const actual = prefixTupleType(struct { usize, []const u8 }, bool);
     try std.testing.expectEqual(expected, actual);
 }
 
@@ -62,7 +72,7 @@ test "test_extend_tuple_type" {
 /// values from existing tuple are copied over to the corresponding field in the new tuple
 /// this is helpful to slowly construct a tuple of values (since an array cannot hold mixed types)
 /// for the default value of each argument/option
-pub inline fn extendTupleComptime(comptime T: type, comptime appendT: type, comptime tup: T, comptime maybe_append: ?appendT) extendTupleType(T, appendT) {
+pub inline fn extendTuple(comptime T: type, comptime appendT: type, tup: T, maybe_append: ?appendT) extendTupleType(T, appendT) {
     const N = @typeInfo(T).@"struct".field_names.len;
     const newT = extendTupleType(T, appendT);
 
@@ -76,16 +86,40 @@ pub inline fn extendTupleComptime(comptime T: type, comptime appendT: type, comp
     return ret;
 }
 
+pub inline fn prefixTuple(comptime T: type, comptime prependT: type, tup: T, maybe_prepend: ?prependT) prefixTupleType(T, prependT) {
+    const newT = prefixTupleType(T, prependT);
+
+    const next_field_ts = @typeInfo(newT).@"struct".field_types;
+    const next_field_ns = @typeInfo(newT).@"struct".field_names;
+    comptime var ret: newT = undefined;
+    inline for (@typeInfo(T).@"struct".field_names, next_field_ns[1..], next_field_ts[1..]) |old_field_n, new_field_n, new_field_t| {
+        @field(ret, new_field_n) = @as(new_field_t, @field(tup, old_field_n));
+    }
+    if (maybe_prepend) |prepend| @field(ret, next_field_ns[0]) = @as(next_field_ts[0], prepend);
+    return ret;
+}
+
 test "extend_tuple_with_value" {
     const expected = .{ 34, true, "hello world" };
     const initial = .{ 34, true };
-    try std.testing.expectEqual(expected, extendTupleComptime(@TypeOf(initial), []const u8, initial, "hello world"));
+    try std.testing.expectEqual(expected, extendTuple(@TypeOf(initial), []const u8, initial, "hello world"));
 }
 
 test "extend_tuple_no_value" {
     const expected = struct { comptime_int, bool, []const u8 };
     const initial = .{ 34, true };
-    try std.testing.expectEqual(expected, @TypeOf(extendTupleComptime(@TypeOf(initial), []const u8, initial, null)));
+    try std.testing.expectEqual(expected, @TypeOf(extendTuple(@TypeOf(initial), []const u8, initial, null)));
+}
+test "prefix_tuple_with_value" {
+    const expected = .{ 34, true, "hello world" };
+    const initial = .{ true, "hello world" };
+    try std.testing.expectEqual(expected, prefixTuple(@TypeOf(initial), comptime_int, initial, 34));
+}
+
+test "prefix_tuple_no_value" {
+    const expected = struct { comptime_int, bool, []const u8 };
+    const initial: struct { bool, []const u8 } = .{ true, "hello world" };
+    try std.testing.expectEqual(expected, @TypeOf(prefixTuple(@TypeOf(initial), comptime_int, initial, null)));
 }
 
 /// produces a new slice which 'appends' the new value to the existing slice

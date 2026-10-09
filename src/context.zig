@@ -1,23 +1,29 @@
+//! context.zig
+//!
+//! structure to hold important utilities and interfaces while abstracting away the `std.process.Init` structure
+//! allows us to execute a command in different contexts where `init` is not available e.g. testing
+
 const std = @import("std");
 
 pub const Context = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     environ_map: std.process.Environ.Map,
 
-    pub fn initTest() Context {
-        return Context{
-            .io = std.testing.io,
-            .gpa = std.testing.allocator,
-            .environ_map = std.testing.environ.createMap(std.testing.allocator),
-        };
-    }
+    stdin: *std.Io.Reader,
+    stdout: *std.Io.Writer,
+    stderr: *std.Io.Writer,
 
-    pub fn init(i: std.process.Init) Context {
+    fn initForProcess(init: std.process.Init, stdin_reader: *std.Io.Reader, stdout_writer: *std.Io.Writer, stderr_writer: *std.Io.Writer) Context {
         return Context{
-            .io = i.io,
-            .gpa = i.gpa,
-            .environ_map = i.environ_map,
+            .io = init.io,
+            .gpa = init.gpa,
+            .arena = init.arena,
+            .environ_map = init.environ_map,
+            .stdin = stdin_reader,
+            .stdout = stdout_writer,
+            .stderr = stderr_writer,
         };
     }
 };
