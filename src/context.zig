@@ -8,8 +8,9 @@ const std = @import("std");
 pub const Context = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
-    arena: std.heap.ArenaAllocator,
-    environ_map: std.process.Environ.Map,
+
+    arena: *std.heap.ArenaAllocator,
+    environ_map: *std.process.Environ.Map,
 
     stdin: *std.Io.Reader,
     stdout: *std.Io.Writer,

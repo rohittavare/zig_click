@@ -736,8 +736,8 @@ fn charToIdx(c: u8) ?usize {
 // check that multiple args and all data types can be handled
 test "arg_parser_datatypes" {
     const allocator = std.testing.allocator;
-    var itr = try tokenizer.StringIterator.initAllocator(allocator, "true false \"hello world\" 123 3.14");
-    defer itr.deinitAllocator(allocator);
+    var itr = try tokenizer.StringIterator.init(allocator, "true false \"hello world\" 123 3.14");
+    defer itr.deinit(allocator);
 
     // bool, optional, string, int, float
     const parser = ExhaustiveParser()
@@ -754,8 +754,8 @@ test "arg_parser_datatypes" {
 // check that multiple args and all data types can be handled
 test "arg_parser_ignore_token" {
     const allocator = std.testing.allocator;
-    var itr = try tokenizer.StringIterator.initAllocator(allocator, "-- \"hello world\"");
-    defer itr.deinitAllocator(allocator);
+    var itr = try tokenizer.StringIterator.init(allocator, "-- \"hello world\"");
+    defer itr.deinit(allocator);
 
     // bool, optional, string, int, float
     const parser = ExhaustiveParser().addArgument([]const u8);
@@ -771,8 +771,8 @@ test "arg_parser_help_flag" {
 
     // test separate & conjoined value cases
     // boolean long flags tested in different case
-    var itr = try tokenizer.StringIterator.initAllocator(allocator, "--long-flag value --help");
-    defer itr.deinitAllocator(allocator);
+    var itr = try tokenizer.StringIterator.init(allocator, "--long-flag value --help");
+    defer itr.deinit(allocator);
     try std.testing.expectEqualDeep(null, try parser.parse(itr.asTokenizer()));
 }
 
@@ -783,14 +783,14 @@ test "arg_parser_option_arg" {
 
     // test separate & conjoined value cases
     // boolean long flags tested in different case
-    var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "--long-flag value");
-    defer itr1.deinitAllocator(allocator);
-    var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "--long-flag=value");
-    defer itr2.deinitAllocator(allocator);
-    var itr3 = try tokenizer.StringIterator.initAllocator(allocator, "-l value");
-    defer itr3.deinitAllocator(allocator);
-    var itr4 = try tokenizer.StringIterator.initAllocator(allocator, "-lvalue");
-    defer itr4.deinitAllocator(allocator);
+    var itr1 = try tokenizer.StringIterator.init(allocator, "--long-flag value");
+    defer itr1.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "--long-flag=value");
+    defer itr2.deinit(allocator);
+    var itr3 = try tokenizer.StringIterator.init(allocator, "-l value");
+    defer itr3.deinit(allocator);
+    var itr4 = try tokenizer.StringIterator.init(allocator, "-lvalue");
+    defer itr4.deinit(allocator);
     const expected: parser.outputType() = .{"value"};
     try std.testing.expectEqualDeep(expected, (try parser.parse(itr1.asTokenizer())).?);
     try std.testing.expectEqualDeep(expected, (try parser.parse(itr2.asTokenizer())).?);
@@ -807,20 +807,20 @@ test "arg_parser_multi_short_flag" {
     // - separate flags
     // - joined in a single token, with value in separate token
     // - flags & value in a single token
-    var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "-y -t value");
-    defer itr1.deinitAllocator(allocator);
-    var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "-yt value");
-    defer itr2.deinitAllocator(allocator);
-    var itr3 = try tokenizer.StringIterator.initAllocator(allocator, "-ytvalue");
-    defer itr3.deinitAllocator(allocator);
+    var itr1 = try tokenizer.StringIterator.init(allocator, "-y -t value");
+    defer itr1.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "-yt value");
+    defer itr2.deinit(allocator);
+    var itr3 = try tokenizer.StringIterator.init(allocator, "-ytvalue");
+    defer itr3.deinit(allocator);
     const expected1: parser.outputType() = .{ true, "value" };
     try std.testing.expectEqualDeep(expected1, (try parser.parse(itr1.asTokenizer())).?);
     try std.testing.expectEqualDeep(expected1, (try parser.parse(itr2.asTokenizer())).?);
     try std.testing.expectEqualDeep(expected1, (try parser.parse(itr3.asTokenizer())).?);
 
     // - moving t after y should make it part of `-y` value
-    var itr4 = try tokenizer.StringIterator.initAllocator(allocator, "-tyvalue");
-    defer itr4.deinitAllocator(allocator);
+    var itr4 = try tokenizer.StringIterator.init(allocator, "-tyvalue");
+    defer itr4.deinit(allocator);
     const expected2: parser.outputType() = .{ false, "yvalue" };
     try std.testing.expectEqualDeep(expected2, (try parser.parse(itr4.asTokenizer())).?);
 }
@@ -831,17 +831,17 @@ test "arg_parser_bool_flag" {
     const parser = ExhaustiveParser().addFlag("--yes/--no,-y/-n");
 
     // check that both positive and negative flags work for short & long flags
-    var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "--yes");
-    defer itr1.deinitAllocator(allocator);
-    var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "-y");
-    defer itr2.deinitAllocator(allocator);
+    var itr1 = try tokenizer.StringIterator.init(allocator, "--yes");
+    defer itr1.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "-y");
+    defer itr2.deinit(allocator);
     try std.testing.expectEqualDeep(.{true}, (try parser.parse(itr1.asTokenizer())).?);
     try std.testing.expectEqualDeep(.{true}, (try parser.parse(itr2.asTokenizer())).?);
 
-    var itr3 = try tokenizer.StringIterator.initAllocator(allocator, "--no");
-    defer itr3.deinitAllocator(allocator);
-    var itr4 = try tokenizer.StringIterator.initAllocator(allocator, "-n");
-    defer itr4.deinitAllocator(allocator);
+    var itr3 = try tokenizer.StringIterator.init(allocator, "--no");
+    defer itr3.deinit(allocator);
+    var itr4 = try tokenizer.StringIterator.init(allocator, "-n");
+    defer itr4.deinit(allocator);
     try std.testing.expectEqualDeep(.{false}, (try parser.parse(itr3.asTokenizer())).?);
     try std.testing.expectEqualDeep(.{false}, (try parser.parse(itr4.asTokenizer())).?);
 }
@@ -852,14 +852,14 @@ test "arg_parser_no_exhaust" {
     const parser = NonExhaustiveParser().addFlag("-y").addArgument([]const u8);
 
     // even when exhast is off, we expect the option to populate because it appears before the argument
-    var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "\"hello world\" -y");
-    defer itr1.deinitAllocator(allocator);
+    var itr1 = try tokenizer.StringIterator.init(allocator, "\"hello world\" -y");
+    defer itr1.deinit(allocator);
     const expected1: parser.outputType() = .{ false, "hello world" };
     try std.testing.expectEqualDeep(expected1, (try parser.parse(itr1.asTokenizer())).?);
 
     // in this case, option is ignored because arguments are populated before it
-    var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "-y \"hello world\"");
-    defer itr2.deinitAllocator(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "-y \"hello world\"");
+    defer itr2.deinit(allocator);
     const expected2: parser.outputType() = .{ true, "hello world" };
     try std.testing.expectEqualDeep(expected2, (try parser.parse(itr2.asTokenizer())).?);
 }
@@ -880,8 +880,8 @@ test "arg_parser_no_exhaust" {
 
 test "arg_parser_missing_pos_arg" {
     const allocator = std.testing.allocator;
-    var itr = try tokenizer.StringIterator.initAllocator(allocator, "hello world");
-    defer itr.deinitAllocator(allocator);
+    var itr = try tokenizer.StringIterator.init(allocator, "hello world");
+    defer itr.deinit(allocator);
 
     const parser = ExhaustiveParser()
         .addArgument([]const u8)
@@ -893,8 +893,8 @@ test "arg_parser_missing_pos_arg" {
 
 test "arg_parser_unexpected_pos_arg" {
     const allocator = std.testing.allocator;
-    var itr = try tokenizer.StringIterator.initAllocator(allocator, "foo bar baz");
-    defer itr.deinitAllocator(allocator);
+    var itr = try tokenizer.StringIterator.init(allocator, "foo bar baz");
+    defer itr.deinit(allocator);
 
     const parser = ExhaustiveParser()
         .addArgument([]const u8)
@@ -908,10 +908,10 @@ test "arg_parser_invalid_long_flag" {
 
     const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
 
-    var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "--long-fl@g value");
-    defer itr1.deinitAllocator(allocator);
-    var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "--long-fl@g=value");
-    defer itr2.deinitAllocator(allocator);
+    var itr1 = try tokenizer.StringIterator.init(allocator, "--long-fl@g value");
+    defer itr1.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "--long-fl@g=value");
+    defer itr2.deinit(allocator);
     const expected = ParserError.InvalidOption;
     try std.testing.expectError(expected, parser.parse(itr1.asTokenizer()));
     try std.testing.expectError(expected, parser.parse(itr2.asTokenizer()));
@@ -922,10 +922,10 @@ test "arg_parser_unrecognized_long_flag" {
 
     const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
 
-    var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "--unknown-flag value");
-    defer itr1.deinitAllocator(allocator);
-    var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "--unknown-flag=value");
-    defer itr2.deinitAllocator(allocator);
+    var itr1 = try tokenizer.StringIterator.init(allocator, "--unknown-flag value");
+    defer itr1.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "--unknown-flag=value");
+    defer itr2.deinit(allocator);
     const expected = ParserError.UnrecognizedOption;
     try std.testing.expectError(expected, parser.parse(itr1.asTokenizer()));
     try std.testing.expectError(expected, parser.parse(itr2.asTokenizer()));
@@ -936,8 +936,8 @@ test "arg_parser_missing_long_flag_arg" {
 
     const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
 
-    var itr = try tokenizer.StringIterator.initAllocator(allocator, "--long-flag");
-    defer itr.deinitAllocator(allocator);
+    var itr = try tokenizer.StringIterator.init(allocator, "--long-flag");
+    defer itr.deinit(allocator);
     try std.testing.expectError(ParserError.MissingArgument, parser.parse(itr.asTokenizer()));
 }
 
@@ -946,8 +946,8 @@ test "arg_parser_unexpected_long_flag_arg" {
 
     const parser = ExhaustiveParser().addFlag("--long-flag,-l");
 
-    var itr = try tokenizer.StringIterator.initAllocator(allocator, "--long-flag=value");
-    defer itr.deinitAllocator(allocator);
+    var itr = try tokenizer.StringIterator.init(allocator, "--long-flag=value");
+    defer itr.deinit(allocator);
     try std.testing.expectError(ParserError.UnexpectedArgument, parser.parse(itr.asTokenizer()));
 }
 
@@ -957,10 +957,10 @@ test "arg_parser_invalid_short_flag" {
     const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
 
     // test for separate and joined values
-    var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "-@ value");
-    defer itr1.deinitAllocator(allocator);
-    var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "-@value");
-    defer itr2.deinitAllocator(allocator);
+    var itr1 = try tokenizer.StringIterator.init(allocator, "-@ value");
+    defer itr1.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "-@value");
+    defer itr2.deinit(allocator);
     const expected = ParserError.InvalidOption;
     try std.testing.expectError(expected, parser.parse(itr1.asTokenizer()));
     try std.testing.expectError(expected, parser.parse(itr2.asTokenizer()));
@@ -972,13 +972,13 @@ test "arg_parser_unrecognized_short_flag" {
     const parser = ExhaustiveParser().addFlag("-t/-f");
 
     // test for separate and joined values
-    var itr1 = try tokenizer.StringIterator.initAllocator(allocator, "-y value");
-    defer itr1.deinitAllocator(allocator);
-    var itr2 = try tokenizer.StringIterator.initAllocator(allocator, "-yvalue");
-    defer itr2.deinitAllocator(allocator);
+    var itr1 = try tokenizer.StringIterator.init(allocator, "-y value");
+    defer itr1.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "-yvalue");
+    defer itr2.deinit(allocator);
     // also check that `-y` gets treated as an unexpected option rather than swallowed as a value of flag `-t`
-    var itr3 = try tokenizer.StringIterator.initAllocator(allocator, "-tyvalue");
-    defer itr3.deinitAllocator(allocator);
+    var itr3 = try tokenizer.StringIterator.init(allocator, "-tyvalue");
+    defer itr3.deinit(allocator);
     const expected = ParserError.UnrecognizedOption;
     try std.testing.expectError(expected, parser.parse(itr1.asTokenizer()));
     try std.testing.expectError(expected, parser.parse(itr2.asTokenizer()));
@@ -990,8 +990,8 @@ test "arg_parser_missing_short_flag_arg" {
 
     const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
 
-    var itr = try tokenizer.StringIterator.initAllocator(allocator, "-l");
-    defer itr.deinitAllocator(allocator);
+    var itr = try tokenizer.StringIterator.init(allocator, "-l");
+    defer itr.deinit(allocator);
     const expected = ParserError.MissingArgument;
     try std.testing.expectError(expected, parser.parse(itr.asTokenizer()));
 }
@@ -1000,14 +1000,14 @@ test "arg_parser_missing_short_flag_arg" {
 // expect an 'invalid argument value' error
 test "arg_parser_invalid_datatypes" {
     const allocator = std.testing.allocator;
-    var invalid_bool_itr = try tokenizer.StringIterator.initAllocator(allocator, "tru3 false 123 3.14");
-    defer invalid_bool_itr.deinitAllocator(allocator);
-    var invalid_opt_itr = try tokenizer.StringIterator.initAllocator(allocator, "true fals3 123 3.14");
-    defer invalid_opt_itr.deinitAllocator(allocator);
-    var invalid_int_itr = try tokenizer.StringIterator.initAllocator(allocator, "true false 1230 3.14");
-    defer invalid_int_itr.deinitAllocator(allocator);
-    var invalid_float_itr = try tokenizer.StringIterator.initAllocator(allocator, "true false 123 3.1.4");
-    defer invalid_float_itr.deinitAllocator(allocator);
+    var invalid_bool_itr = try tokenizer.StringIterator.init(allocator, "tru3 false 123 3.14");
+    defer invalid_bool_itr.deinit(allocator);
+    var invalid_opt_itr = try tokenizer.StringIterator.init(allocator, "true fals3 123 3.14");
+    defer invalid_opt_itr.deinit(allocator);
+    var invalid_int_itr = try tokenizer.StringIterator.init(allocator, "true false 1230 3.14");
+    defer invalid_int_itr.deinit(allocator);
+    var invalid_float_itr = try tokenizer.StringIterator.init(allocator, "true false 123 3.1.4");
+    defer invalid_float_itr.deinit(allocator);
 
     // bool, optional, string, int, float
     const parser = ExhaustiveParser()

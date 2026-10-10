@@ -106,33 +106,37 @@ const context = @import("context.zig");
 
 pub fn Command(comptime name: []const u8, comptime description: []const u8) CommandStruct {
     return CommandStruct{
-        .t = struct {},
         .name = name,
         .description = description,
         .parser = parser.ExhaustiveParser(),
     };
 }
 
+/// enables the functional-style construction of a command -- specifying supported options, arguments & handler function
 pub const CommandStruct = struct {
-    t: type,
     name: []const u8,
     description: []const u8,
     parser: parser.Parser,
-    handler_fn: ?*anyopaque = null,
+    handler_fn: ?*const anyopaque = null,
 
     const Self = @This();
 
+    // these comptime functions help us construct
+    // more complex types based on the parser data shape
     inline fn n(comptime self: Self) usize {
-        return @typeInfo(self.t).@"struct".field_names.len;
+        return @typeInfo(self.parser.t).@"struct".field_names.len;
     }
     inline fn handlerT(comptime self: Self) type {
-        return @Fn([_]type{context.Context} ++ @typeInfo(self.t).@"struct".field_types, &@as([self.n() + 1]std.builtin.Type.Fn.ParamAttributes, @splat(std.builtin.Type.Fn.ParamAttributes{})), error{}!void, std.builtin.Type.Fn.Attributes{});
+        return @Fn([_]type{context.Context} ++ @typeInfo(self.parser.t).@"struct".field_types, &@as([self.n() + 1]std.builtin.Type.Fn.ParamAttributes, @splat(std.builtin.Type.Fn.ParamAttributes{})), anyerror!void, std.builtin.Type.Fn.Attributes{});
+    }
+    inline fn handlerPtrT(comptime self: Self) type {
+        const handler_t = self.handlerT();
+        return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, handler_t, null);
     }
 
     pub inline fn option(comptime self: Self, comptime declaration: []const u8, comptime opT: type, comptime def: opT) Self {
         if (self.handler_fn) |_| @compileError("please add options before registering the handler function");
-        return Command{
-            .t = util.extendTupleType(self.t, opT),
+        return CommandStruct{
             .name = self.name,
             .description = self.description,
             .parser = self.parser.addOption(declaration, opT, def),
@@ -142,8 +146,7 @@ pub const CommandStruct = struct {
 
     pub inline fn flag(comptime self: Self, comptime declaration: []const u8) Self {
         if (self.handler_fn) |_| @compileError("please add flags before registering the handler function");
-        return Command{
-            .t = util.extendTupleType(self.t, bool),
+        return CommandStruct{
             .name = self.name,
             .description = self.description,
             .parser = self.parser.addFlag(declaration),
@@ -153,8 +156,7 @@ pub const CommandStruct = struct {
 
     pub inline fn argument(comptime self: Self, comptime argT: type) Self {
         if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
-        return Command{
-            .t = util.extendTupleType(self.t, argT),
+        return CommandStruct{
             .name = self.name,
             .description = self.description,
             .parser = self.parser.addArgument(argT),
@@ -162,10 +164,11 @@ pub const CommandStruct = struct {
         };
     }
 
+    /// the handler function should be added *after* any and all options/arguments are registered via the `option`, `flag` and `argument` handlers
+    /// the handler's signature should start with a `Context` object, then follow the order of arguments/options registered to the command
     pub inline fn handler(comptime self: Self, comptime handler_fn: self.handlerT()) Self {
         if (self.handler_fn) |_| @compileError("handler function is already registered");
         return Self{
-            .t = self.t,
             .name = self.name,
             .description = self.description,
             .parser = self.parser,
@@ -173,11 +176,13 @@ pub const CommandStruct = struct {
         };
     }
 
+    /// an internal method used to run the command with prebuilt context & tokenizer
+    /// enabled us to run this command from main or from a test
     pub fn invoke(comptime self: Self, ctx: context.Context, itr: tokenizer.Tokenizer) !void {
         if (try self.parser.parse(itr)) |args| {
             if (self.handler_fn) |handler_func| {
-                const handler_f = @as(*self.handlerT(), @ptrCast(@alignCast(handler_func))).*;
-                const params = util.prefixTuple(self.t, context.Context, args, ctx);
+                const handler_f: self.handlerT() = @as(self.handlerPtrT(), @ptrCast(@alignCast(handler_func))).*;
+                const params = util.prefixTuple(self.parser.t, context.Context, args, ctx);
                 try @call(std.builtin.CallModifier.auto, handler_f, params);
             }
         } else {
@@ -185,6 +190,7 @@ pub const CommandStruct = struct {
         }
     }
 
+    /// use this function to invoke this command in your script's main function
     pub fn main(comptime self: Self, init: std.process.Init) !void {
         const io = init.io;
 

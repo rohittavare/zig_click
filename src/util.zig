@@ -72,13 +72,13 @@ test "test_prefix_tuple_type" {
 /// values from existing tuple are copied over to the corresponding field in the new tuple
 /// this is helpful to slowly construct a tuple of values (since an array cannot hold mixed types)
 /// for the default value of each argument/option
-pub inline fn extendTuple(comptime T: type, comptime appendT: type, tup: T, maybe_append: ?appendT) extendTupleType(T, appendT) {
+pub fn extendTuple(comptime T: type, comptime appendT: type, tup: T, maybe_append: ?appendT) extendTupleType(T, appendT) {
     const N = @typeInfo(T).@"struct".field_names.len;
     const newT = extendTupleType(T, appendT);
 
     const next_field_ts = @typeInfo(newT).@"struct".field_types;
     const next_field_ns = @typeInfo(newT).@"struct".field_names;
-    comptime var ret: newT = undefined;
+    var ret: newT = undefined;
     inline for (@typeInfo(T).@"struct".field_names, next_field_ns[0..N], next_field_ts[0..N]) |old_field_n, new_field_n, new_field_t| {
         @field(ret, new_field_n) = @as(new_field_t, @field(tup, old_field_n));
     }
@@ -86,12 +86,12 @@ pub inline fn extendTuple(comptime T: type, comptime appendT: type, tup: T, mayb
     return ret;
 }
 
-pub inline fn prefixTuple(comptime T: type, comptime prependT: type, tup: T, maybe_prepend: ?prependT) prefixTupleType(T, prependT) {
+pub fn prefixTuple(comptime T: type, comptime prependT: type, tup: T, maybe_prepend: ?prependT) prefixTupleType(T, prependT) {
     const newT = prefixTupleType(T, prependT);
 
     const next_field_ts = @typeInfo(newT).@"struct".field_types;
     const next_field_ns = @typeInfo(newT).@"struct".field_names;
-    comptime var ret: newT = undefined;
+    var ret: newT = undefined;
     inline for (@typeInfo(T).@"struct".field_names, next_field_ns[1..], next_field_ts[1..]) |old_field_n, new_field_n, new_field_t| {
         @field(ret, new_field_n) = @as(new_field_t, @field(tup, old_field_n));
     }
