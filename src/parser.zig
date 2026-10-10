@@ -12,6 +12,15 @@ const tokenizer = @import("tokenizer.zig");
 const util = @import("util.zig");
 const types = @import("types.zig");
 
+/// command names are allowed alphanumeric characters, `-` and `_`
+pub fn validCommandName(name: []const u8) bool {
+    for (name) |c| switch (c) {
+        'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {},
+        else => return false,
+    };
+    return true;
+}
+
 const FlagParserError = error{
     IncorrectSpecificationFormat,
     InvalidFlagName,

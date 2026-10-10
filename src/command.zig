@@ -105,6 +105,7 @@ const context = @import("context.zig");
 // }
 
 pub fn Command(comptime name: []const u8, comptime description: []const u8) CommandStruct {
+    if (!(comptime parser.validCommandName(name))) @compileError("command name may only contain '-', '_' and alphanumeric characters: " ++ name);
     return CommandStruct{
         .name = name,
         .description = description,

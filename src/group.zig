@@ -27,6 +27,7 @@ pub const CommandOrGroup = union(enum) {
 };
 
 pub inline fn Group(comptime name: []const u8, comptime description: []const u8) GroupStruct {
+    if (!(comptime parser.validCommandName(name))) @compileError("group name may only contain '-', '_' and alphanumeric characters: " ++ name);
     return GroupStruct{
         .name = name,
         .description = description,
@@ -42,6 +43,7 @@ pub const GroupStruct = struct {
     commands: []const CommandOrGroup,
 
     pub inline fn subcommand(comptime self: GroupStruct, comptime command_struct: cmd.CommandStruct) GroupStruct {
+        if (self.command_idx.get(command_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ command_struct.name ++ "\"");
         return GroupStruct{
             .name = self.name,
             .description = self.description,
@@ -52,6 +54,7 @@ pub const GroupStruct = struct {
 
     // maybe we should have a single method for adding both commands and groups?
     pub inline fn subgroup(comptime self: GroupStruct, comptime group_struct: GroupStruct) GroupStruct {
+        if (self.command_idx.get(group_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ group_struct.name ++ "\"");
         return GroupStruct{
             .name = self.name,
             .description = self.description,
