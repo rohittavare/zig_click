@@ -10,6 +10,7 @@ const std = @import("std");
 const tokenizer = @import("tokenizer.zig");
 const command = @import("command.zig");
 const context = @import("context.zig");
+const group = @import("group.zig");
 
 /// stored the output & potential errors of a command run
 /// since output is generated at runtime & allocated by the runner
@@ -47,13 +48,16 @@ pub const RunnerConfig = struct {
 /// note: output capture only works on the stdout & stderr writers provided in context
 ///       `std.debug.print()` or any other writers (to file or stdout/err) cannot be captured (yet)
 /// note: currently only supports running in a test environment
-pub const CliRunner = struct {
+pub const CliRunner = union(enum) {
     cmd: *const command.CommandStruct,
+    grp: *const group.GroupStruct,
 
-    pub inline fn init(comptime c: command.CommandStruct) CliRunner {
-        return CliRunner{
-            .cmd = &c,
-        };
+    pub inline fn init(comptime c: anytype) CliRunner {
+        switch (@TypeOf(c)) {
+            group.GroupStruct => return CliRunner{ .grp = &c },
+            command.CommandStruct => return CliRunner{ .cmd = &c },
+            else => |t| @compileError("only Groups or Commands allowed. found: " ++ @typeName(t)),
+        }
     }
 
     /// constructs the necessary inputs: stdin, argument tokenizer, allocators, env maps
@@ -89,7 +93,10 @@ pub const CliRunner = struct {
             .stderr = &stderr.writer,
         };
 
-        const result = self.cmd.invoke(ctx, itr.asTokenizer());
+        const result = switch (self) {
+            .cmd => |c| c.invoke(ctx, itr.asTokenizer()),
+            .grp => |g| g.invoke(ctx, itr.asTokenizer()),
+        };
 
         var ret = RunResult{
             .allocator = &allocator,
@@ -195,4 +202,36 @@ test "test_command_runner_env" {
         \\
         ,
     });
+}
+
+const foo_cmd = command.Command("foo", "").argument([]const u8).handler(foo);
+fn foo(ctx: context.Context, arg: []const u8) !void {
+    try ctx.stdout.print("foo {s}", .{arg});
+    try ctx.stdout.flush();
+}
+
+const bar_cmd = command.Command("bar", "").argument([]const u8).handler(bar);
+fn bar(ctx: context.Context, arg: []const u8) !void {
+    try ctx.stdout.print("bar {s}", .{arg});
+    try ctx.stdout.flush();
+}
+
+const baz_cmd = command.Command("baz", "").argument([]const u8).handler(baz);
+fn baz(ctx: context.Context, arg: []const u8) !void {
+    try ctx.stdout.print("baz {s}", .{arg});
+    try ctx.stdout.flush();
+}
+
+const nested_group = group.Group("nested-group", "").subcommand(baz_cmd);
+
+const command_group = group.Group("test-group", "")
+    .subcommand(foo_cmd)
+    .subcommand(bar_cmd)
+    .subgroup(nested_group);
+
+test "test_command_group" {
+    const runner = CliRunner.init(command_group);
+    try runner.runTest(RunnerConfig{ .args = "foo \"hello world\"" }, RunResult{ .stdout = "foo hello world" });
+    try runner.runTest(RunnerConfig{ .args = "bar \"hello world\"" }, RunResult{ .stdout = "bar hello world" });
+    try runner.runTest(RunnerConfig{ .args = "nested-group baz \"hello world\"" }, RunResult{ .stdout = "baz hello world" });
 }
