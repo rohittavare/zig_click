@@ -5,11 +5,11 @@ const util = @import("util.zig");
 const context = @import("context.zig");
 const tokenizer = @import("tokenizer.zig");
 
-const CommandOrGroup = union(enum) {
+pub const CommandOrGroup = union(enum) {
     command: *const cmd.CommandStruct,
     group: *const GroupStruct,
 
-    pub fn init(comptime command_or_group: anytype) CommandOrGroup {
+    pub inline fn init(comptime command_or_group: anytype) CommandOrGroup {
         return switch (@TypeOf(command_or_group)) {
             cmd.CommandStruct => CommandOrGroup{ .command = &command_or_group },
             GroupStruct => CommandOrGroup{ .group = &command_or_group },
@@ -50,6 +50,7 @@ pub const GroupStruct = struct {
         };
     }
 
+    // maybe we should have a single method for adding both commands and groups?
     pub inline fn subgroup(comptime self: GroupStruct, comptime group_struct: GroupStruct) GroupStruct {
         return GroupStruct{
             .name = self.name,

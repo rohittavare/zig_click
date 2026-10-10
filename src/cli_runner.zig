@@ -48,16 +48,13 @@ pub const RunnerConfig = struct {
 /// note: output capture only works on the stdout & stderr writers provided in context
 ///       `std.debug.print()` or any other writers (to file or stdout/err) cannot be captured (yet)
 /// note: currently only supports running in a test environment
-pub const CliRunner = union(enum) {
-    cmd: *const command.CommandStruct,
-    grp: *const group.GroupStruct,
+pub const CliRunner = struct {
+    command_or_group: group.CommandOrGroup,
 
     pub inline fn init(comptime c: anytype) CliRunner {
-        switch (@TypeOf(c)) {
-            group.GroupStruct => return CliRunner{ .grp = &c },
-            command.CommandStruct => return CliRunner{ .cmd = &c },
-            else => |t| @compileError("only Groups or Commands allowed. found: " ++ @typeName(t)),
-        }
+        return CliRunner{
+            .command_or_group = group.CommandOrGroup.init(c),
+        };
     }
 
     /// constructs the necessary inputs: stdin, argument tokenizer, allocators, env maps
@@ -93,10 +90,7 @@ pub const CliRunner = union(enum) {
             .stderr = &stderr.writer,
         };
 
-        const result = switch (self) {
-            .cmd => |c| c.invoke(ctx, itr.asTokenizer()),
-            .grp => |g| g.invoke(ctx, itr.asTokenizer()),
-        };
+        const result = self.command_or_group.invoke(ctx, itr.asTokenizer());
 
         var ret = RunResult{
             .allocator = &allocator,
