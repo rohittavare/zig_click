@@ -6,6 +6,7 @@ const util = @import("util.zig");
 const types = @import("types.zig");
 const tokenizer = @import("tokenizer.zig");
 const context = @import("context.zig");
+const fmt = @import("fmt.zig");
 
 // const EmptyCommandType = CommandStruct(struct {});
 // pub fn Command(comptime name: []const u8, comptime description: []const u8) EmptyCommandType {
@@ -120,6 +121,9 @@ pub const CommandStruct = struct {
     parser: parser.Parser,
     handler_fn: ?*const anyopaque = null,
 
+    arg_help: []const u8 = "",
+    opt_help: []const u8 = "",
+
     const Self = @This();
 
     // these comptime functions help us construct
@@ -135,33 +139,39 @@ pub const CommandStruct = struct {
         return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, handler_t, null);
     }
 
-    pub inline fn option(comptime self: Self, comptime declaration: []const u8, comptime opT: type, comptime def: opT) Self {
+    pub inline fn option(comptime self: Self, comptime declaration: []const u8, comptime opT: type, comptime def: opT, comptime help: []const u8) Self {
         if (self.handler_fn) |_| @compileError("please add options before registering the handler function");
         return CommandStruct{
             .name = self.name,
             .description = self.description,
             .parser = self.parser.addOption(declaration, opT, def),
             .handler_fn = self.handler_fn,
+            .opt_help = self.opt_help ++ fmt.optionHelpText(declaration, opT, help),
+            .arg_help = self.arg_help,
         };
     }
 
-    pub inline fn flag(comptime self: Self, comptime declaration: []const u8) Self {
+    pub inline fn flag(comptime self: Self, comptime declaration: []const u8, comptime help: []const u8) Self {
         if (self.handler_fn) |_| @compileError("please add flags before registering the handler function");
         return CommandStruct{
             .name = self.name,
             .description = self.description,
             .parser = self.parser.addFlag(declaration),
             .handler_fn = self.handler_fn,
+            .opt_help = self.opt_help ++ fmt.flagHelpText(declaration, help),
+            .arg_help = self.arg_help,
         };
     }
 
-    pub inline fn argument(comptime self: Self, comptime argT: type) Self {
+    pub inline fn argument(comptime self: Self, comptime argT: type, comptime help: []const u8) Self {
         if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
         return CommandStruct{
             .name = self.name,
             .description = self.description,
             .parser = self.parser.addArgument(argT),
             .handler_fn = self.handler_fn,
+            .opt_help = self.opt_help,
+            .arg_help = self.arg_help ++ fmt.argumentHelpText(self.parser.arguments.len, argT, help),
         };
     }
 
@@ -189,6 +199,19 @@ pub const CommandStruct = struct {
                 }
             } else {
                 // perform help message
+                const message = comptime message_fmt: {
+                    var body: []const u8 = std.fmt.comptimePrint("{s}\n\nUSAGE:\n  {s}{s}{s}\n", .{
+                        self.description,
+                        self.name,
+                        if (self.opt_help.len > 0) " [OPTION]..." else "",
+                        if (self.arg_help.len > 0) " [ARG]..." else "",
+                    });
+                    if (self.arg_help.len > 0) body = body ++ "\nARGUMENTS:\n" ++ self.arg_help;
+                    if (self.opt_help.len > 0) body = body ++ "\nOPTIONS:\n" ++ self.opt_help;
+                    break :message_fmt body;
+                };
+                try ctx.stderr.print("{s}\n", .{message});
+                try ctx.stderr.flush();
             }
         } else |_| {
             std.debug.print("Try using '--help' to show more information\n", .{});

@@ -117,10 +117,10 @@ pub const CliRunner = struct {
     }
 };
 
-const echoTestCommand = command.Command("echo_test_command", "")
-    .flag("--stderr/--stdout")
-    .option("--echo-me,-e", ?[]const u8, null)
-    .argument([]const u8)
+const echoTestCommand = command.Command("echo_test_command", "basic test command to print out data received by the handler")
+    .flag("--stderr/--stdout", "whether to print values to stdout or stderr")
+    .option("--echo-me,-e", ?[]const u8, null, "echo the contents of this flag's arguments")
+    .argument([]const u8, "command line contents to echo")
     .handler(handler);
 
 fn handler(ctx: context.Context, use_stderr: bool, echo_opn: ?[]const u8, echo_arg: []const u8) !void {
@@ -198,27 +198,33 @@ test "test_command_runner_env" {
     });
 }
 
-const foo_cmd = command.Command("foo", "").argument([]const u8).handler(foo);
+const foo_cmd = command.Command("foo", "echos argument prepended with 'foo'")
+    .argument([]const u8, "contents to echo")
+    .handler(foo);
 fn foo(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("foo {s}", .{arg});
     try ctx.stdout.flush();
 }
 
-const bar_cmd = command.Command("bar", "").argument([]const u8).handler(bar);
+const bar_cmd = command.Command("bar", "echos argument prepended with 'bar'")
+    .argument([]const u8, "contents to echo")
+    .handler(bar);
 fn bar(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("bar {s}", .{arg});
     try ctx.stdout.flush();
 }
 
-const baz_cmd = command.Command("baz", "").argument([]const u8).handler(baz);
+const baz_cmd = command.Command("baz", "echos argument prepended with 'baz'")
+    .argument([]const u8, "contents to echu")
+    .handler(baz);
 fn baz(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("baz {s}", .{arg});
     try ctx.stdout.flush();
 }
 
-const nested_group = group.Group("nested-group", "").subcommand(baz_cmd);
+const nested_group = group.Group("nested-group", "a group of commands within a group of commands").subcommand(baz_cmd);
 
-const command_group = group.Group("test-group", "")
+const command_group = group.Group("test-group", "a top-level group of commands")
     .subcommand(foo_cmd)
     .subcommand(bar_cmd)
     .subgroup(nested_group);

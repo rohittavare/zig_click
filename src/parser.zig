@@ -517,6 +517,8 @@ pub const Parser = struct {
     // otherwise stop when the last argument
     // is satisfied
     exhaust: bool,
+    has_options: bool,
+    has_args: bool,
 
     const Self = @This();
     inline fn n(comptime self: Self) usize {
@@ -529,6 +531,8 @@ pub const Parser = struct {
         .short_flags = &@as([62]?OptionPointer, @splat(null)),
         .arguments = &[0]usize{},
         .exhaust = true,
+        .has_options = false,
+        .has_args = false,
     };
 
     pub inline fn setExhaust(comptime self: Self, comptime val: bool) Self {
@@ -539,6 +543,8 @@ pub const Parser = struct {
             .long_flags = self.long_flags,
             .short_flags = self.short_flags,
             .exhaust = val,
+            .has_options = self.has_options,
+            .has_args = self.has_args,
         };
     }
 
@@ -552,6 +558,8 @@ pub const Parser = struct {
                 .short_flags = self.short_flags,
                 .arguments = util.extendSliceComptime(usize, self.arguments, self.n()),
                 .exhaust = self.exhaust,
+                .has_options = self.has_options,
+                .has_args = true,
             };
         }
     }
@@ -581,6 +589,8 @@ pub const Parser = struct {
                 .short_flags = short_flags,
                 .arguments = self.arguments,
                 .exhaust = self.exhaust,
+                .has_options = true,
+                .has_args = self.has_args,
             };
         }
     }
@@ -619,6 +629,8 @@ pub const Parser = struct {
                 .short_flags = short_flags,
                 .arguments = self.arguments,
                 .exhaust = self.exhaust,
+                .has_options = true,
+                .has_args = self.has_args,
             };
         }
     }

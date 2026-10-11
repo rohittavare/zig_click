@@ -4,6 +4,7 @@ const cmd = @import("command.zig");
 const util = @import("util.zig");
 const context = @import("context.zig");
 const tokenizer = @import("tokenizer.zig");
+const fmt = @import("fmt.zig");
 
 pub const CommandOrGroup = union(enum) {
     command: *const cmd.CommandStruct,
@@ -15,6 +16,20 @@ pub const CommandOrGroup = union(enum) {
             GroupStruct => CommandOrGroup{ .group = &command_or_group },
             CommandOrGroup => command_or_group,
             else => |t| @compileError("expected CommandStruct or GroupStruct. found: " ++ @typeName(t)),
+        };
+    }
+
+    pub fn name(self: CommandOrGroup) []const u8 {
+        return switch (self) {
+            .command => |c| c.name,
+            .group => |g| g.name,
+        };
+    }
+
+    pub fn description(self: CommandOrGroup) []const u8 {
+        return switch (self) {
+            .command => |c| c.description,
+            .group => |g| g.description,
         };
     }
 
@@ -78,7 +93,19 @@ pub const GroupStruct = struct {
                     std.debug.print("Try using '--help' to show more information\n", .{});
                 }
             } else {
-                // TODO: perform help message
+                // perform help message
+                const message = comptime message_fmt: {
+                    var body: []const u8 = std.fmt.comptimePrint("{s}\n\nUSAGE:\n  {s} [COMMAND]\n\nCOMMANDS:\n", .{
+                        self.description,
+                        self.name,
+                    });
+                    for (self.commands) |command| {
+                        body = body ++ fmt.commandHelpText(command.name(), command.description());
+                    }
+                    break :message_fmt body;
+                };
+                try ctx.stderr.print("{s}\n", .{message});
+                try ctx.stderr.flush();
             }
         } else |_| {
             std.debug.print("Try using '--help' to show more information\n", .{});
