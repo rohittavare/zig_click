@@ -43,7 +43,7 @@ pub const GroupStruct = struct {
     commands: []const CommandOrGroup,
 
     pub inline fn subcommand(comptime self: GroupStruct, comptime command_struct: cmd.CommandStruct) GroupStruct {
-        if (self.command_idx.get(command_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ command_struct.name ++ "\"");
+        if (self.command_idx.has(command_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ command_struct.name ++ "\"");
         return GroupStruct{
             .name = self.name,
             .description = self.description,
@@ -54,7 +54,7 @@ pub const GroupStruct = struct {
 
     // maybe we should have a single method for adding both commands and groups?
     pub inline fn subgroup(comptime self: GroupStruct, comptime group_struct: GroupStruct) GroupStruct {
-        if (self.command_idx.get(group_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ group_struct.name ++ "\"");
+        if (self.command_idx.has(group_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ group_struct.name ++ "\"");
         return GroupStruct{
             .name = self.name,
             .description = self.description,
@@ -66,18 +66,22 @@ pub const GroupStruct = struct {
     pub fn invoke(comptime self: GroupStruct, ctx: context.Context, itr: tokenizer.Tokenizer) !void {
         var chosen_cmd: [self.commands.len]bool = @splat(false);
         const prsr = parser.NonExhaustiveParser().addArgument([]const u8);
-        if (try prsr.parse(itr)) |args| {
-            if (self.command_idx.get(args.@"0")) |cmd_idx| {
-                chosen_cmd[cmd_idx] = true;
-                inline for (self.commands, chosen_cmd) |com, should_run| {
-                    if (should_run) try com.invoke(ctx, itr);
+        if (prsr.parse(itr)) |maybe_args| {
+            if (maybe_args) |args| {
+                if (self.command_idx.get(args.@"0")) |cmd_idx| {
+                    chosen_cmd[cmd_idx] = true;
+                    inline for (self.commands, chosen_cmd) |com, should_run| {
+                        if (should_run) try com.invoke(ctx, itr);
+                    }
+                } else {
+                    std.debug.print("error: unrecognized command '{s}'\n", .{args.@"0"});
+                    std.debug.print("Try using '--help' to show more information\n", .{});
                 }
             } else {
-                // TODO: better error message here
-                @panic("unrecognized command!");
+                // TODO: perform help message
             }
-        } else {
-            // TODO: perform help message
+        } else |_| {
+            std.debug.print("Try using '--help' to show more information\n", .{});
         }
     }
 

@@ -180,14 +180,18 @@ pub const CommandStruct = struct {
     /// an internal method used to run the command with prebuilt context & tokenizer
     /// enabled us to run this command from main or from a test
     pub fn invoke(comptime self: Self, ctx: context.Context, itr: tokenizer.Tokenizer) !void {
-        if (try self.parser.parse(itr)) |args| {
-            if (self.handler_fn) |handler_func| {
-                const handler_f: self.handlerT() = @as(self.handlerPtrT(), @ptrCast(@alignCast(handler_func))).*;
-                const params = util.prefixTuple(self.parser.t, context.Context, args, ctx);
-                try @call(std.builtin.CallModifier.auto, handler_f, params);
+        if (self.parser.parse(itr)) |maybe_args| {
+            if (maybe_args) |args| {
+                if (self.handler_fn) |handler_func| {
+                    const handler_f: self.handlerT() = @as(self.handlerPtrT(), @ptrCast(@alignCast(handler_func))).*;
+                    const params = util.prefixTuple(self.parser.t, context.Context, args, ctx);
+                    try @call(std.builtin.CallModifier.auto, handler_f, params);
+                }
+            } else {
+                // perform help message
             }
-        } else {
-            // perform help message
+        } else |_| {
+            std.debug.print("Try using '--help' to show more information\n", .{});
         }
     }
 

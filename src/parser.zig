@@ -647,18 +647,30 @@ pub const Parser = struct {
             } else if (std.mem.startsWith(u8, token, "--")) {
                 // long flag - unpack flag name & value + validate flag name
                 const flag, const maybe_value = unpackLongFlagToken(token);
-                const flag_name = extract_long_flag_name(flag) catch return ParserError.InvalidOption;
+                const flag_name = extract_long_flag_name(flag) catch {
+                    std.debug.print("error: '{s}' is not a valid option\n", .{flag});
+                    return ParserError.InvalidOption;
+                };
                 if (std.mem.eql(u8, flag_name, "help")) return null;
                 if (self.long_flags.get(flag_name)) |ptr| {
                     if (ptr.bool_v) |value| {
                         // if it is a boolean flag, we should expect no corresponding ooption argument
-                        if (maybe_value) |_| return ParserError.UnexpectedArgument;
+                        if (maybe_value) |_| {
+                            std.debug.print("error: option '{s}' doesn't accept an argument\n", .{flag});
+                            return ParserError.UnexpectedArgument;
+                        }
                         tokens[ptr.idx] = if (value) "true" else "false";
                     } else {
                         // use the packaged value if provided, else use the next token as our option argument
-                        tokens[ptr.idx] = maybe_value orelse itr.next() orelse return ParserError.MissingArgument;
+                        tokens[ptr.idx] = maybe_value orelse itr.next() orelse {
+                            std.debug.print("error: option '{s}' requires an argument\n", .{flag});
+                            return ParserError.MissingArgument;
+                        };
                     }
-                } else return ParserError.UnrecognizedOption;
+                } else {
+                    std.debug.print("error: unrecognized option '{s}'\n", .{flag});
+                    return ParserError.UnrecognizedOption;
+                }
             } else if (std.mem.startsWith(u8, token, "-") and token.len > 1) {
                 // short flag - multiple short flags can be grouped together in a single token
                 for (token[1..], 1..) |c, i| {
@@ -671,23 +683,41 @@ pub const Parser = struct {
                                 // - use the remaining token as the value
                                 // - use the next token as the value (if at the end)
                                 const value = token[i + 1 ..];
-                                tokens[ptr.idx] = if (value.len > 0) value else itr.next() orelse return ParserError.MissingArgument;
+                                tokens[ptr.idx] = if (value.len > 0) value else itr.next() orelse {
+                                    std.debug.print("error: option requires an argument -- '{c}'\n", .{c});
+                                    return ParserError.MissingArgument;
+                                };
                                 break;
                             }
-                        } else return ParserError.UnrecognizedOption;
-                    } else return ParserError.InvalidOption;
+                        } else {
+                            std.debug.print("error: unrecognized option -- '{c}'\n", .{c});
+                            return ParserError.UnrecognizedOption;
+                        }
+                    } else {
+                        std.debug.print("error: invalid option -- '{c}'\n", .{c});
+                        return ParserError.InvalidOption;
+                    }
                 }
             } else {
                 // argument - find the next argument we need to supply and place to token in the appropriate index
-                if (arg_idx >= self.arguments.len) return ParserError.UnexpectedArgument;
+                if (arg_idx >= self.arguments.len) {
+                    std.debug.print("error: unexpected argument '{s}'\n", .{token});
+                    return ParserError.UnexpectedArgument;
+                }
                 tokens[self.arguments[arg_idx]] = token;
                 arg_idx += 1;
                 if (!self.exhaust and arg_idx == self.arguments.len) break;
             }
         }
-        if (arg_idx < self.arguments.len) return ParserError.MissingArgument;
+        if (arg_idx < self.arguments.len) {
+            std.debug.print("error: missing argument at index {d}\n", .{arg_idx});
+            return ParserError.MissingArgument;
+        }
         inline for (@typeInfo(self.t).@"struct".field_names, @typeInfo(self.t).@"struct".field_types, tokens) |name, t, maybe_token| {
-            if (maybe_token) |token| @field(result, name) = parseToken(t, token) orelse return ParserError.InvalidArgument;
+            if (maybe_token) |token| @field(result, name) = parseToken(t, token) orelse {
+                std.debug.print("error: invalid argument -- expected {s} got {s}\n", .{ types.type_to_name(t), token });
+                return ParserError.InvalidArgument;
+            };
         }
         return result;
     }
