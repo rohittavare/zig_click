@@ -146,7 +146,7 @@ pub const CommandStruct = struct {
             .description = self.description,
             .parser = self.parser.addOption(declaration, opT, def),
             .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help ++ fmt.optionHelpText(declaration, opT, help),
+            .opt_help = self.opt_help ++ fmt.optionHelpText(declaration, opT, help) ++ "\n",
             .arg_help = self.arg_help,
         };
     }
@@ -158,7 +158,7 @@ pub const CommandStruct = struct {
             .description = self.description,
             .parser = self.parser.addFlag(declaration),
             .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help ++ fmt.flagHelpText(declaration, help),
+            .opt_help = self.opt_help ++ fmt.flagHelpText(declaration, help) ++ "\n",
             .arg_help = self.arg_help,
         };
     }
@@ -171,7 +171,7 @@ pub const CommandStruct = struct {
             .parser = self.parser.addArgument(argT),
             .handler_fn = self.handler_fn,
             .opt_help = self.opt_help,
-            .arg_help = self.arg_help ++ fmt.argumentHelpText(self.parser.arguments.len, argT, help),
+            .arg_help = self.arg_help ++ fmt.argumentHelpText(self.parser.arguments.len, argT, help) ++ "\n",
         };
     }
 
@@ -184,6 +184,8 @@ pub const CommandStruct = struct {
             .description = self.description,
             .parser = self.parser,
             .handler_fn = &handler_fn,
+            .opt_help = self.opt_help,
+            .arg_help = self.arg_help,
         };
     }
 

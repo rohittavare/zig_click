@@ -143,6 +143,30 @@ fn handler(ctx: context.Context, use_stderr: bool, echo_opn: ?[]const u8, echo_a
     try writer.flush();
 }
 
+test "test_command_help_message" {
+    const expected =
+        \\basic test command to print out data received by the handler
+        \\
+        \\USAGE:
+        \\  echo_test_command [OPTION]... [ARG]...
+        \\
+        \\ARGUMENTS:
+        \\  0: TEXT                     command line contents to echo
+        \\
+        \\OPTIONS:
+        \\         --stderr/--stdout    whether to print values to stdout or stderr
+        \\  -e,    --echo-me=TEXT       echo the contents of this flag's arguments
+        \\
+        \\
+    ;
+    const runner = CliRunner.init(echoTestCommand);
+    try runner.runTest(RunnerConfig{
+        .args = "--help",
+    }, RunResult{
+        .stderr = expected,
+    });
+}
+
 test "test_command_runner_stdin" {
     const runner = CliRunner.init(echoTestCommand);
     try runner.runTest(RunnerConfig{
@@ -215,7 +239,7 @@ fn bar(ctx: context.Context, arg: []const u8) !void {
 }
 
 const baz_cmd = command.Command("baz", "echos argument prepended with 'baz'")
-    .argument([]const u8, "contents to echu")
+    .argument([]const u8, "contents to echo")
     .handler(baz);
 fn baz(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("baz {s}", .{arg});
@@ -228,6 +252,40 @@ const command_group = group.Group("test-group", "a top-level group of commands")
     .subcommand(foo_cmd)
     .subcommand(bar_cmd)
     .subgroup(nested_group);
+
+test "test_command_group_help_message" {
+    const expected =
+        \\a top-level group of commands
+        \\
+        \\USAGE:
+        \\  test-group [COMMAND]
+        \\
+        \\COMMANDS:
+        \\  foo                         echos argument prepended with 'foo'
+        \\  bar                         echos argument prepended with 'bar'
+        \\  nested-group                a group of commands within a group of commands
+        \\
+        \\
+    ;
+    const runner = CliRunner.init(command_group);
+    try runner.runTest(RunnerConfig{ .args = "--help" }, RunResult{ .stderr = expected });
+}
+
+test "test_command_group_command_help_message" {
+    const expected =
+        \\echos argument prepended with 'baz'
+        \\
+        \\USAGE:
+        \\  baz [ARG]...
+        \\
+        \\ARGUMENTS:
+        \\  0: TEXT                     contents to echo
+        \\
+        \\
+    ;
+    const runner = CliRunner.init(command_group);
+    try runner.runTest(RunnerConfig{ .args = "nested-group baz \"argument\" --help" }, RunResult{ .stderr = expected });
+}
 
 test "test_command_group" {
     const runner = CliRunner.init(command_group);

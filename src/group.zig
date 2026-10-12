@@ -100,7 +100,7 @@ pub const GroupStruct = struct {
                         self.name,
                     });
                     for (self.commands) |command| {
-                        body = body ++ fmt.commandHelpText(command.name(), command.description());
+                        body = body ++ fmt.commandHelpText(command.name(), command.description()) ++ "\n";
                     }
                     break :message_fmt body;
                 };

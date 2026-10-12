@@ -73,13 +73,13 @@ pub inline fn appendColumn(comptime line: []const u8, comptime column: []const u
         var itr = std.mem.tokenizeScalar(u8, column, '\n');
         var result: []const u8 = "";
         if (line.len > idx) {
-            result = result ++ line ++ "\n";
+            result = result ++ line;
         } else {
-            result = result ++ line ++ @as([idx - line.len]u8, @splat(' ')) ++ (itr.next() orelse "") ++ "\n";
+            result = result ++ line ++ @as([idx - line.len]u8, @splat(' ')) ++ (itr.next() orelse "");
         }
         const spacer = @as([idx]u8, @splat(' '));
         while (itr.next()) |next_line| {
-            result = result ++ spacer ++ next_line ++ "\n";
+            result = result ++ "\n" ++ spacer ++ next_line;
         }
         return result;
     }
@@ -98,7 +98,6 @@ test "append_column" {
         \\            piece of 
         \\            text that
         \\            is column
-        \\
     ;
     try std.testing.expectEqualStrings(expected, appendColumn(line, column, 12));
 }
@@ -117,7 +116,6 @@ test "append_column_long_line" {
         \\          piece of 
         \\          text that
         \\          is column
-        \\
     ;
     try std.testing.expectEqualStrings(expected, appendColumn(line, column, 10));
 }
@@ -130,13 +128,22 @@ pub inline fn argumentHelpText(comptime idx: usize, comptime t: type, comptime d
     );
 }
 
+test "argument_help_text" {
+    const expected =
+        \\  0: TEXT                     this is a test description for a test argument so 
+        \\                                I can validate the argument help text. 
+    ;
+    const actual = argumentHelpText(0, []const u8, "this is a test description for a test argument so I can validate the argument help text.");
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
 pub inline fn flagHelpText(
     comptime declaration: []const u8,
     comptime description: []const u8,
 ) []const u8 {
     comptime {
         const flags = parser.parseBoolFlag(declaration) catch unreachable;
-        var short_flags = short_flag_str: {
+        var short_flags: []const u8 = short_flag_str: {
             if (flags.short_positive) |flag| {
                 if (flags.short_negative) |negative_flag| {
                     break :short_flag_str std.fmt.comptimePrint("-{c}/-{c}", .{ flag, negative_flag });
@@ -159,6 +166,55 @@ pub inline fn flagHelpText(
         if (short_flags.len > 0 and long_flags.len > 0) short_flags = short_flags ++ ",";
         const line = appendColumn("  " ++ short_flags, long_flags, LONG_FLAG_COLUMN_IDX);
         return appendColumn(line, columnizeComptime(description, DESCRIPTION_WIDTH, DESCRIPTION_INDENT), DESCRIPTION_COLUMN_IDX);
+    }
+}
+
+test "flag_help_text" {
+    const cases = .{
+        .{
+            "-y",
+            "some description",
+            "  -y                          some description",
+        },
+        .{
+            "-y/-n",
+            "some description",
+            "  -y/-n                       some description",
+        },
+        .{
+            "-y/-n,--yes",
+            "some description",
+            "  -y/-n, --yes                some description",
+        },
+        .{
+            "-y/-n,--yes/--no",
+            "some description",
+            "  -y/-n, --yes/--no           some description",
+        },
+        .{
+            "-y,--yes/--no",
+            "some description",
+            "  -y,    --yes/--no           some description",
+        },
+        .{
+            "-y,--yes",
+            "some description",
+            "  -y,    --yes                some description",
+        },
+        .{
+            "--yes/--no",
+            "some description",
+            "         --yes/--no           some description",
+        },
+        .{
+            "--yes",
+            "some description",
+            "         --yes                some description",
+        },
+    };
+    inline for (cases) |case| {
+        const decl, const desc, const expected = case;
+        try std.testing.expectEqualStrings(expected, flagHelpText(decl, desc));
     }
 }
 
@@ -191,10 +247,41 @@ pub inline fn optionHelpText(
     }
 }
 
+test "option_help_text" {
+    const cases = .{
+        .{
+            "--option",
+            usize,
+            "some description",
+            "         --option=SIZE        some description",
+        },
+        .{
+            "--option,-o",
+            usize,
+            "some description",
+            "  -o,    --option=SIZE        some description",
+        },
+        .{
+            "-o",
+            usize,
+            "some description",
+            "  -o SIZE                     some description",
+        },
+    };
+    inline for (cases) |case| {
+        const decl, const t, const desc, const expected = case;
+        try std.testing.expectEqualStrings(expected, optionHelpText(decl, t, desc));
+    }
+}
+
 pub inline fn commandHelpText(comptime name: []const u8, comptime description: []const u8) []const u8 {
     return appendColumn(
         "  " ++ name,
         columnizeComptime(description, DESCRIPTION_WIDTH, DESCRIPTION_INDENT),
         DESCRIPTION_COLUMN_IDX,
     );
+}
+
+test "command_help_text" {
+    try std.testing.expectEqualStrings("  hello                       some description", commandHelpText("hello", "some description"));
 }
