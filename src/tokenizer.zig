@@ -102,7 +102,7 @@ pub const Tokenizer = union(enum) {
     }
 };
 
-test "test_string_tokenizer" {
+test "string_tokenizer" {
     const allocator = std.testing.allocator;
     const input = "hello world \"hello world\" \"s/^\\(.*\\)\\\\(.*)$/\\1/g\"   --print=\"hello world\"  \"\"  ";
     const expected_tokens = [_][]const u8{

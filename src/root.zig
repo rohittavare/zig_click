@@ -1,3 +1,7 @@
+//! root.zig
+//!
+//! the module root. imports all tests and exposes only the necessary public APIs
+
 const std = @import("std");
 
 const cli_runner = @import("cli_runner.zig");

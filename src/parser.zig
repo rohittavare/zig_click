@@ -4,7 +4,7 @@
 //! and construct supported data types from string, used to construct arguments during runtime
 //!
 //! for the purposes of CLI arguments, optional inputs are specified using flags. These are represented as
-//! a word or contiguous phrase prefixed by two dashes (long flag) - long flags can only contain alphanumeric, '-' and '_' characters, but must start with alphanumeric character
+//! a word or contiguous phrase prefixed by two dashes (long flag) - long flags can only contain alphanumeric, '-' and '_' characters
 //! or an alphanumeric character prefixed by a single dash (short flag)
 
 const std = @import("std");
@@ -328,201 +328,15 @@ const OptionPointer = struct {
     bool_v: ?bool = null,
 };
 
-// /// our parser class
-// /// tracks the arguments and short+long flags and the field index on the output type
-// /// provides helper methods used to build the parser at compile-time (since type data is required)
-// pub fn Parser(comptime ouT: type) type {
-//     return struct {
-//         defaults: ouT,
-//         long_flags: std.StaticStringMap(OptionPointer),
-//         // since short flags are single alphanumeric character
-//         // there are only 62 possible options
-//         short_flags: *const [62]?OptionPointer,
-//         arguments: []const usize,
-//         // whether to consume all token
-//         // otherwise stop when the last argument
-//         // is satisfied
-//         exhaust: bool,
-//
-//         const T = ouT;
-//         const N = @typeInfo(ouT).@"struct".field_names.len;
-//         const Self = @This();
-//         const empty = Self{
-//             .defaults = undefined,
-//             .long_flags = std.StaticStringMap(OptionPointer).initComptime(.{}),
-//             .short_flags = &@as([62]?OptionPointer, @splat(null)),
-//             .arguments = &[0]usize{},
-//             .exhaust = true,
-//         };
-//
-//         pub inline fn setExhaust(comptime self: Self, comptime val: bool) Self {
-//             return if (val == self.exhaust) self else Self{
-//                 .defaults = self.defaults,
-//                 .arguments = self.arguments,
-//                 .long_flags = self.long_flags,
-//                 .short_flags = self.short_flags,
-//                 .exhaust = val,
-//             };
-//         }
-//
-//         pub inline fn addArgument(comptime self: Self, comptime argT: type) Parser(util.extendTupleType(ouT, argT)) {
-//             comptime {
-//                 if (!types.is_supported_argument_type(argT)) @compileError("type " ++ @typeName(argT) ++ " is not one of (or optional variant of) the supported argument types: bool, []const u8, u.., i.., f..");
-//                 const t = util.extendTupleType(ouT, argT);
-//                 return Parser(t){
-//                     .defaults = util.extendTuple(ouT, argT, self.defaults, null),
-//                     .long_flags = self.long_flags,
-//                     .short_flags = self.short_flags,
-//                     .arguments = util.extendSliceComptime(usize, self.arguments, N),
-//                     .exhaust = self.exhaust,
-//                 };
-//             }
-//         }
-//
-//         pub inline fn addOption(comptime self: Self, comptime declaration: []const u8, comptime opT: type, comptime def: opT) Parser(util.extendTupleType(ouT, opT)) {
-//             comptime {
-//                 if (!types.is_supported_option_type(opT)) @compileError("type " ++ @typeName(opT) ++ " is not one of (or optional variant of) the supported types for options: []const u8, u.., i.., f.. (register bool options as flag)");
-//                 const ptr = OptionPointer{ .idx = N };
-//
-//                 const parsed_flags = parseOption(declaration) catch |e| @compileError("error parsing flag declaration (" ++ declaration ++ "): " ++ @errorName(e));
-//                 var long_flags = self.long_flags;
-//                 var short_flags = self.short_flags;
-//                 if (parsed_flags.long) |flag| {
-//                     if (long_flags.has(flag)) @compileError("flag --" ++ flag ++ " is already registered");
-//                     long_flags = util.insertStaticStringMapComptime(OptionPointer, long_flags, .{ flag, ptr });
-//                 }
-//                 if (parsed_flags.short) |flag| {
-//                     const idx = charToIdx(flag).?;
-//                     if (short_flags[idx]) |_| @compileError("flag -" ++ [_]u8{flag} ++ " is already registered");
-//                     short_flags = util.setArrComptime(?OptionPointer, 62, short_flags, idx, ptr);
-//                 }
-//
-//                 const t = util.extendTupleType(ouT, opT);
-//                 return Parser(t){
-//                     .defaults = util.extendTuple(ouT, opT, self.defaults, def),
-//                     .long_flags = long_flags,
-//                     .short_flags = short_flags,
-//                     .arguments = self.arguments,
-//                     .exhaust = self.exhaust,
-//                 };
-//             }
-//         }
-//
-//         pub inline fn addFlag(comptime self: Self, comptime declaration: []const u8) Parser(util.extendTupleType(ouT, bool)) {
-//             comptime {
-//                 const positive_ptr = OptionPointer{ .idx = N, .bool_v = true };
-//                 const negative_ptr = OptionPointer{ .idx = N, .bool_v = false };
-//
-//                 const parsed_flags = parseBoolFlag(declaration) catch |e| @compileError("error parsing flag declaration `" ++ declaration ++ "`: " ++ @errorName(e));
-//                 var long_flags = self.long_flags;
-//                 var short_flags = self.short_flags;
-//                 if (parsed_flags.long_positive) |flag| {
-//                     if (long_flags.has(flag)) @compileError("flag --" ++ flag ++ " is already registered");
-//                     long_flags = util.insertStaticStringMapComptime(OptionPointer, long_flags, .{ flag, positive_ptr });
-//                 }
-//                 if (parsed_flags.long_negative) |flag| {
-//                     if (long_flags.has(flag)) @compileError("flag --" ++ flag ++ " is already registered");
-//                     long_flags = util.insertStaticStringMapComptime(OptionPointer, long_flags, .{ flag, negative_ptr });
-//                 }
-//                 if (parsed_flags.short_positive) |flag| {
-//                     const idx = charToIdx(flag).?;
-//                     if (short_flags[idx]) |_| @compileError("flag -" ++ [_]u8{flag} ++ " is already registered");
-//                     short_flags = util.setArrComptime(?OptionPointer, 62, short_flags, idx, positive_ptr);
-//                 }
-//                 if (parsed_flags.short_negative) |flag| {
-//                     const idx = charToIdx(flag).?;
-//                     if (short_flags[idx]) |_| @compileError("flag -" ++ [_]u8{flag} ++ " is already registered");
-//                     short_flags = util.setArrComptime(?OptionPointer, 62, short_flags, idx, negative_ptr);
-//                 }
-//
-//                 const t = util.extendTupleType(ouT, bool);
-//                 return Parser(t){
-//                     .defaults = util.extendTuple(ouT, bool, self.defaults, false),
-//                     .long_flags = long_flags,
-//                     .short_flags = short_flags,
-//                     .arguments = self.arguments,
-//                     .exhaust = self.exhaust,
-//                 };
-//             }
-//         }
-//
-//         pub inline fn outputType(comptime _: Self) type {
-//             return T;
-//         }
-//
-//         /// parses tokens from our tokenizer based on the provided config
-//         /// note: there are a couple edge cases:
-//         /// - the `--` token is ignored
-//         /// - cannot parse negative values to arguments. the leading `-` categorizes
-//         ///   the token as a short flag (this is similar behavior if you tried with `ls` e.g. `ls -3`)
-//         ///   recommend to use options instead
-//         /// - `--help` is a special case flag that will return `null`
-//         ///
-//         /// currently doesn't output helpful error messages e.g. which option/argument caused the error
-//         pub fn parse(comptime self: Self, itr: tokenizer.Tokenizer) !?ouT {
-//             var arg_idx: usize = 0;
-//             var tokens: [N]?[]const u8 = @splat(null);
-//             var result = self.defaults;
-//             if (!self.exhaust and arg_idx == self.arguments.len) return result;
-//             while (itr.next()) |token| {
-//                 if (std.mem.eql(u8, token, "--")) {
-//                     // special `--` argument - not sure what do with it yet
-//                 } else if (std.mem.startsWith(u8, token, "--")) {
-//                     // long flag - unpack flag name & value + validate flag name
-//                     const flag, const maybe_value = unpackLongFlagToken(token);
-//                     const flag_name = extract_long_flag_name(flag) catch return ParserError.InvalidOption;
-//                     if (std.mem.eql(u8, flag_name, "help")) return null;
-//                     if (self.long_flags.get(flag_name)) |ptr| {
-//                         if (ptr.bool_v) |value| {
-//                             // if it is a boolean flag, we should expect no corresponding ooption argument
-//                             if (maybe_value) |_| return ParserError.UnexpectedArgument;
-//                             tokens[ptr.idx] = if (value) "true" else "false";
-//                         } else {
-//                             // use the packaged value if provided, else use the next token as our option argument
-//                             tokens[ptr.idx] = maybe_value orelse itr.next() orelse return ParserError.MissingArgument;
-//                         }
-//                     } else return ParserError.UnrecognizedOption;
-//                 } else if (std.mem.startsWith(u8, token, "-") and token.len > 1) {
-//                     // short flag - multiple short flags can be grouped together in a single token
-//                     for (token[1..], 1..) |c, i| {
-//                         if (charToIdx(c)) |idx| {
-//                             if (self.short_flags[idx]) |ptr| {
-//                                 if (ptr.bool_v) |value| {
-//                                     tokens[ptr.idx] = if (value) "true" else "false";
-//                                 } else {
-//                                     // short flags requiring a parameter either
-//                                     // - use the remaining token as the value
-//                                     // - use the next token as the value (if at the end)
-//                                     const value = token[i + 1 ..];
-//                                     tokens[ptr.idx] = if (value.len > 0) value else itr.next() orelse return ParserError.MissingArgument;
-//                                     break;
-//                                 }
-//                             } else return ParserError.UnrecognizedOption;
-//                         } else return ParserError.InvalidOption;
-//                     }
-//                 } else {
-//                     // argument - find the next argument we need to supply and place to token in the appropriate index
-//                     if (arg_idx >= self.arguments.len) return ParserError.UnexpectedArgument;
-//                     tokens[self.arguments[arg_idx]] = token;
-//                     arg_idx += 1;
-//                     if (!self.exhaust and arg_idx == self.arguments.len) break;
-//                 }
-//             }
-//             if (arg_idx < self.arguments.len) return ParserError.MissingArgument;
-//             inline for (@typeInfo(ouT).@"struct".field_names, @typeInfo(ouT).@"struct".field_types, tokens) |n, t, maybe_token| {
-//                 if (maybe_token) |token| @field(result, n) = parseToken(t, token) orelse return ParserError.InvalidArgument;
-//             }
-//             return result;
-//         }
-//     };
-// }
-
 const ValueSource = union(enum) {
     long_flag: []const u8,
     short_flag: u8,
     positional: usize,
 };
 
+/// a custom error class to work around limitations in error unions in zig
+/// persist relevant information for a particular error to the caller
+/// the caller can decide to print this to stderr or hanlde errors in different ways
 pub const ParserError = union(enum) {
     UnrecognizedLongOption: []const u8,
     UnrecognizedShortOption: u8,
@@ -607,6 +421,7 @@ test "error_formatting" {
     }
 }
 
+/// our custom return type that integrates a successful parse, error and help-message states
 pub fn ParserResult(comptime T: type) type {
     return union(enum) {
         result: T,

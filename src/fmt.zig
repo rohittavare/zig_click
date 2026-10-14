@@ -1,6 +1,8 @@
 //! fmt.zig
 //!
-//!
+//! helpers specifically to format text to output on the screen; primarily to organize the help message
+//! most helpers performed at compiletime, since most data is already known at that time
+//! and avoid the need for an allocator
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -11,6 +13,10 @@ const DESCRIPTION_INDENT: usize = 2;
 const DESCRIPTION_COLUMN_IDX: usize = 30;
 const LONG_FLAG_COLUMN_IDX: usize = 9;
 
+/// linewrap the provided text to fit within the specified column width
+/// apply an indent to subsequent wrapped lines
+/// assumes the input is constructed of space-separated words
+/// hyphenate significantly long words
 pub inline fn columnizeComptime(comptime text: []const u8, comptime width: usize, comptime indent: usize) []const u8 {
     if (text.len < width) return text;
     comptime {
@@ -68,6 +74,8 @@ test "columnize_long" {
     try std.testing.expectEqualStrings(expected, columnizeComptime(input, 15, 2));
 }
 
+/// appends the provided multi-line string to the given single-lined string at the specified offset
+/// fills in blank space after the input LHS string is exhausted
 pub inline fn appendColumn(comptime line: []const u8, comptime column: []const u8, comptime idx: usize) []const u8 {
     comptime {
         var itr = std.mem.tokenizeScalar(u8, column, '\n');

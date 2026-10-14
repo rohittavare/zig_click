@@ -143,7 +143,7 @@ fn handler(ctx: context.Context, use_stderr: bool, echo_opn: ?[]const u8, echo_a
     try writer.flush();
 }
 
-test "test_command_help_message" {
+test "command_help_message" {
     const expected =
         \\basic test command to print out data received by the handler
         \\
@@ -167,7 +167,7 @@ test "test_command_help_message" {
     });
 }
 
-test "test_command_runner_stdin" {
+test "command_runner_stdin" {
     const runner = CliRunner.init(echoTestCommand);
     try runner.runTest(RunnerConfig{
         .args = "\"\"",
@@ -177,7 +177,7 @@ test "test_command_runner_stdin" {
     });
 }
 
-test "test_command_runner_to_stderr" {
+test "command_runner_to_stderr" {
     const runner = CliRunner.init(echoTestCommand);
     try runner.runTest(RunnerConfig{
         .args = "\"\" --stderr",
@@ -187,7 +187,7 @@ test "test_command_runner_to_stderr" {
     });
 }
 
-test "test_command_runner_arg" {
+test "command_runner_arg" {
     const runner = CliRunner.init(echoTestCommand);
     try runner.runTest(RunnerConfig{
         .args = "\"this is an argument\"",
@@ -196,7 +196,7 @@ test "test_command_runner_arg" {
     });
 }
 
-test "test_command_runner_opt" {
+test "command_runner_opt" {
     const runner = CliRunner.init(echoTestCommand);
     try runner.runTest(RunnerConfig{
         .args = "\"\" --echo-me \"this is an option\"",
@@ -205,7 +205,7 @@ test "test_command_runner_opt" {
     });
 }
 
-test "test_command_runner_env" {
+test "command_runner_env" {
     const runner = CliRunner.init(echoTestCommand);
     try runner.runTest(RunnerConfig{
         .args = "\"\"",
@@ -253,7 +253,7 @@ const command_group = group.Group("test-group", "a top-level group of commands")
     .subcommand(bar_cmd)
     .subgroup(nested_group);
 
-test "test_command_group_help_message" {
+test "command_group_help_message" {
     const expected =
         \\a top-level group of commands
         \\
@@ -271,7 +271,27 @@ test "test_command_group_help_message" {
     try runner.runTest(RunnerConfig{ .args = "--help" }, RunResult{ .stderr = expected });
 }
 
-test "test_command_group_command_help_message" {
+test "command_group_missing_command" {
+    const expected =
+        \\error: please specify a subcommand
+        \\Try using '--help' to show more information
+        \\
+    ;
+    const runner = CliRunner.init(command_group);
+    try runner.runTest(RunnerConfig{ .args = "nested-group" }, RunResult{ .stderr = expected });
+}
+
+test "command_group_unknonwn_command" {
+    const expected =
+        \\error: unrecognized command 'baz'
+        \\Try using '--help' to show more information
+        \\
+    ;
+    const runner = CliRunner.init(command_group);
+    try runner.runTest(RunnerConfig{ .args = "baz" }, RunResult{ .stderr = expected });
+}
+
+test "command_group_command_help_message" {
     const expected =
         \\echos argument prepended with 'baz'
         \\
@@ -287,7 +307,7 @@ test "test_command_group_command_help_message" {
     try runner.runTest(RunnerConfig{ .args = "nested-group baz \"argument\" --help" }, RunResult{ .stderr = expected });
 }
 
-test "test_command_group" {
+test "command_group" {
     const runner = CliRunner.init(command_group);
     try runner.runTest(RunnerConfig{ .args = "foo \"hello world\"" }, RunResult{ .stdout = "foo hello world" });
     try runner.runTest(RunnerConfig{ .args = "bar \"hello world\"" }, RunResult{ .stdout = "bar hello world" });

@@ -56,13 +56,13 @@ pub inline fn prefixTupleType(comptime T: type, comptime prependT: type) type {
     return @Tuple(&([1]type{prependT} ++ @typeInfo(T).@"struct".field_types.*));
 }
 
-test "test_extend_tuple_type" {
+test "extend_tuple_type" {
     const expected = struct { bool, usize, []const u8 };
     const actual = extendTupleType(struct { bool, usize }, []const u8);
     try std.testing.expectEqual(expected, actual);
 }
 
-test "test_prefix_tuple_type" {
+test "prefix_tuple_type" {
     const expected = struct { bool, usize, []const u8 };
     const actual = prefixTupleType(struct { usize, []const u8 }, bool);
     try std.testing.expectEqual(expected, actual);
@@ -110,6 +110,7 @@ test "extend_tuple_no_value" {
     const initial = .{ 34, true };
     try std.testing.expectEqual(expected, @TypeOf(extendTuple(@TypeOf(initial), []const u8, initial, null)));
 }
+
 test "prefix_tuple_with_value" {
     const expected = .{ 34, true, "hello world" };
     const initial = .{ true, "hello world" };

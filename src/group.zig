@@ -1,3 +1,8 @@
+//! group.zig
+//!
+//! implementation of a command group, which multiplexes multiple defined commands
+//! does not yet support group-level option or handler
+
 const std = @import("std");
 const parser = @import("parser.zig");
 const cmd = @import("command.zig");

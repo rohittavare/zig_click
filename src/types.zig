@@ -31,8 +31,7 @@ pub inline fn is_supported_argument_type(comptime t: type) bool {
 
 const checkers = .{ is_supported_option_type, is_supported_argument_type };
 test "string_slices_supported" {
-    inline for (@typeInfo(@TypeOf(checkers)).@"struct".field_names) |f| {
-        const c = @field(checkers, f);
+    inline for (checkers) |c| {
         try std.testing.expect(c([]const u8));
         // literal string types not supported
         try std.testing.expect(!c(@TypeOf("hello world!")));
@@ -44,8 +43,7 @@ test "string_slices_supported" {
 }
 
 test "optional_types_supported" {
-    inline for (@typeInfo(@TypeOf(checkers)).@"struct".field_names) |f| {
-        const c = @field(checkers, f);
+    inline for (checkers) |c| {
         try std.testing.expect(c(?f32));
         try std.testing.expect(c(?i16));
         try std.testing.expect(c(?[]const u8));
