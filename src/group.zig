@@ -81,18 +81,32 @@ pub const GroupStruct = struct {
     pub fn invoke(comptime self: GroupStruct, ctx: context.Context, itr: tokenizer.Tokenizer) !void {
         var chosen_cmd: [self.commands.len]bool = @splat(false);
         const prsr = parser.NonExhaustiveParser().addArgument([]const u8);
-        if (prsr.parse(itr)) |maybe_args| {
-            if (maybe_args) |args| {
-                if (self.command_idx.get(args.@"0")) |cmd_idx| {
+        switch (prsr.parse(itr)) {
+            .result => |result| {
+                if (self.command_idx.get(result.@"0")) |cmd_idx| {
                     chosen_cmd[cmd_idx] = true;
                     inline for (self.commands, chosen_cmd) |com, should_run| {
                         if (should_run) try com.invoke(ctx, itr);
                     }
                 } else {
-                    std.debug.print("error: unrecognized command '{s}'\n", .{args.@"0"});
-                    std.debug.print("Try using '--help' to show more information\n", .{});
+                    try ctx.stderr.print("error: unrecognized command '{s}'\n", .{result.@"0"});
+                    try ctx.stderr.print("Try using '--help' to show more information\n", .{});
+                    try ctx.stderr.flush();
                 }
-            } else {
+            },
+            .err => |err| switch (err) {
+                .MissingPositionalArgument => {
+                    try ctx.stderr.print("error: please specify a subcommand\n", .{});
+                    try ctx.stderr.print("Try using '--help' to show more information\n", .{});
+                    try ctx.stderr.flush();
+                },
+                else => {
+                    try err.print(ctx.stderr);
+                    try ctx.stderr.print("Try using '--help' to show more information\n", .{});
+                    try ctx.stderr.flush();
+                },
+            },
+            .help => {
                 // perform help message
                 const message = comptime message_fmt: {
                     var body: []const u8 = std.fmt.comptimePrint("{s}\n\nUSAGE:\n  {s} [COMMAND]\n\nCOMMANDS:\n", .{
@@ -106,9 +120,7 @@ pub const GroupStruct = struct {
                 };
                 try ctx.stderr.print("{s}\n", .{message});
                 try ctx.stderr.flush();
-            }
-        } else |_| {
-            std.debug.print("Try using '--help' to show more information\n", .{});
+            },
         }
     }
 

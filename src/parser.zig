@@ -32,28 +32,28 @@ const OptionFlags = struct {
     short: ?u8 = null,
 };
 
-fn extract_long_flag_name(flag: []const u8) FlagParserError![]const u8 {
-    if (!std.mem.startsWith(u8, flag, "--")) return FlagParserError.IncorrectSpecificationFormat;
-    if (flag.len == 2) return FlagParserError.InvalidFlagName;
-    switch (flag[2]) {
-        'a'...'z', 'A'...'Z', '0'...'9' => {},
-        else => return FlagParserError.InvalidFlagName,
-    }
-    for (flag[3..]) |c| switch (c) {
-        'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {},
-        else => return FlagParserError.InvalidFlagName,
-    };
+fn extract_long_flag_name(flag: []const u8) []const u8 {
     return flag[2..];
 }
 
-fn extract_short_flag_name(flag: []const u8) FlagParserError!u8 {
-    if (!std.mem.startsWith(u8, flag, "-")) return FlagParserError.IncorrectSpecificationFormat;
-    if (std.mem.startsWith(u8, flag, "--")) return FlagParserError.IncorrectSpecificationFormat;
-    if (flag.len != 2) return FlagParserError.InvalidFlagName;
-    switch (flag[1]) {
-        'a'...'z', 'A'...'Z', '0'...'9' => |c| return c,
-        else => return FlagParserError.InvalidFlagName,
-    }
+fn valid_long_flag_name(flag: []const u8) bool {
+    if (flag.len == 0) return false;
+    for (flag) |c| switch (c) {
+        'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {},
+        else => return false,
+    };
+    return true;
+}
+
+fn extract_short_flag_name(flag: []const u8) u8 {
+    return flag[1];
+}
+
+fn valid_short_flag_name(flag: u8) bool {
+    return switch (flag) {
+        'a'...'z', 'A'...'Z', '0'...'9' => true,
+        else => false,
+    };
 }
 
 /// option declaration parsing - return the long & short flags provided in the declaration string. Returns a `FlagParserError` on failure.
@@ -86,10 +86,13 @@ pub fn parseOption(declaration: []const u8) FlagParserError!OptionFlags {
     while (flag_tokenizer.next()) |flag| {
         if (std.mem.startsWith(u8, flag, "--")) {
             if (ret.long) |_| return FlagParserError.MultipleFlagDeclaration;
-            ret.long = try extract_long_flag_name(flag);
+            ret.long = extract_long_flag_name(flag);
+            if (!valid_long_flag_name(ret.long.?)) return FlagParserError.InvalidFlagName;
         } else if (std.mem.startsWith(u8, flag, "-")) {
+            if (flag.len != 2) return FlagParserError.InvalidFlagName;
             if (ret.short) |_| return FlagParserError.MultipleFlagDeclaration;
-            ret.short = try extract_short_flag_name(flag);
+            ret.short = extract_short_flag_name(flag);
+            if (!valid_short_flag_name(ret.short.?)) return FlagParserError.InvalidFlagName;
         } else {
             return FlagParserError.IncorrectSpecificationFormat;
         }
@@ -119,7 +122,6 @@ test "parse_option_invalid" {
     const test_cases = [_]struct { []const u8, FlagParserError }{
         .{ "--hello,--world", FlagParserError.MultipleFlagDeclaration },
         .{ "-c,-v", FlagParserError.MultipleFlagDeclaration },
-        .{ "--_flagname", FlagParserError.InvalidFlagName },
         .{ "--flag name", FlagParserError.InvalidFlagName },
         .{ "-@", FlagParserError.InvalidFlagName },
         .{ "-long", FlagParserError.InvalidFlagName },
@@ -176,12 +178,26 @@ pub fn parseBoolFlag(declaration: []const u8) FlagParserError!BoolFlags {
         if (flag_tokenizer.next()) |flag| {
             if (std.mem.startsWith(u8, flag, "--")) {
                 if (ret.long_positive) |_| return FlagParserError.MultipleFlagDeclaration;
-                ret.long_positive = try extract_long_flag_name(flag);
-                if (flag_tokenizer.next()) |second_flag| ret.long_negative = try extract_long_flag_name(second_flag);
+                ret.long_positive = extract_long_flag_name(flag);
+                if (!valid_long_flag_name(ret.long_positive.?)) return FlagParserError.InvalidFlagName;
+                if (flag_tokenizer.next()) |second_flag| {
+                    if (!std.mem.startsWith(u8, second_flag, "--")) return FlagParserError.IncorrectSpecificationFormat;
+                    ret.long_negative = extract_long_flag_name(second_flag);
+                    if (!valid_long_flag_name(ret.long_negative.?)) return FlagParserError.InvalidFlagName;
+                }
             } else if (std.mem.startsWith(u8, flag, "-")) {
+                if (flag.len != 2) return FlagParserError.InvalidFlagName;
                 if (ret.short_positive) |_| return FlagParserError.MultipleFlagDeclaration;
-                ret.short_positive = try extract_short_flag_name(flag);
-                if (flag_tokenizer.next()) |second_flag| ret.short_negative = try extract_short_flag_name(second_flag);
+                ret.short_positive = extract_short_flag_name(flag);
+                if (!valid_short_flag_name(ret.short_positive.?)) return FlagParserError.InvalidFlagName;
+                if (flag_tokenizer.next()) |second_flag| {
+                    if (second_flag.len != 2) {
+                        if (second_flag.len < 2 or second_flag[0] == '-') return FlagParserError.IncorrectSpecificationFormat;
+                        return FlagParserError.InvalidFlagName;
+                    }
+                    ret.short_negative = extract_short_flag_name(second_flag);
+                    if (!valid_short_flag_name(ret.short_negative.?)) return FlagParserError.InvalidFlagName;
+                }
             } else {
                 return FlagParserError.IncorrectSpecificationFormat;
             }
@@ -220,7 +236,6 @@ test "parse_bool_flag_invalid" {
         // support existing test cases
         .{ "--hello,--world", FlagParserError.MultipleFlagDeclaration },
         .{ "-c,-v", FlagParserError.MultipleFlagDeclaration },
-        .{ "--_flagname", FlagParserError.InvalidFlagName },
         .{ "--flag name", FlagParserError.InvalidFlagName },
         .{ "-@", FlagParserError.InvalidFlagName },
         .{ "-long", FlagParserError.InvalidFlagName },
@@ -502,6 +517,104 @@ const OptionPointer = struct {
 //     };
 // }
 
+const ValueSource = union(enum) {
+    long_flag: []const u8,
+    short_flag: u8,
+    positional: usize,
+};
+
+pub const ParserError = union(enum) {
+    UnrecognizedLongOption: []const u8,
+    UnrecognizedShortOption: u8,
+
+    UnexpectedPositionalArgument: []const u8,
+    UnexpectedLongOptionArgument: struct { []const u8, []const u8 },
+    // tuple format: { option/arg identifier, expected type}
+    MissingLongOptionArgument: struct { []const u8, []const u8 },
+    MissingShortOptionArgument: struct { u8, []const u8 },
+    MissingPositionalArgument: struct { usize, []const u8 },
+    // tuple format: { found value, option/arg identifier, expected type}
+    InvalidLongOptionArgument: struct { []const u8, []const u8, []const u8 },
+    InvalidShortOptionArgument: struct { []const u8, u8, []const u8 },
+    InvalidPositionalArgument: struct { []const u8, usize, []const u8 },
+
+    pub fn print(self: ParserError, writer: *std.Io.Writer) !void {
+        try writer.print("error: ", .{});
+        const print_stmt = print_err_msg: switch (self) {
+            .UnrecognizedLongOption => |flag| writer.print("unrecognized option: '{s}'", .{flag}),
+            .UnrecognizedShortOption => |flag| writer.print("unrecognized option -- '{c}'", .{flag}),
+
+            .UnexpectedPositionalArgument => |value| writer.print("unexpected positional argument: '{s}'", .{value}),
+            .UnexpectedLongOptionArgument => |err| {
+                const value, const flag = err;
+                break :print_err_msg writer.print("option '{s}' doesn't accept an argument; found: '{s}'", .{ flag, value });
+            },
+
+            .MissingLongOptionArgument => |err| {
+                const flag, const t = err;
+                break :print_err_msg writer.print("option '{s}' requires argument of type {s}", .{ flag, t });
+            },
+            .MissingShortOptionArgument => |err| {
+                const flag, const t = err;
+                break :print_err_msg writer.print("option requires argument of type {s} -- '{c}'", .{ t, flag });
+            },
+            .MissingPositionalArgument => |err| {
+                const idx, const t = err;
+                break :print_err_msg writer.print("missing positional argument {s} at index {d}", .{ t, idx });
+            },
+
+            .InvalidLongOptionArgument => |err| {
+                const value, const flag, const t = err;
+                break :print_err_msg writer.print("option '{s}' expects argument of type {s}; found: '{s}'", .{ flag, t, value });
+            },
+            .InvalidShortOptionArgument => |err| {
+                const value, const flag, const t = err;
+                break :print_err_msg writer.print("option expects argument of type {s} -- '{c}'; found: '{s}'", .{ t, flag, value });
+            },
+            .InvalidPositionalArgument => |err| {
+                const value, const idx, const t = err;
+                break :print_err_msg writer.print("expected positional argument {s} at index {d}; found: '{s}'", .{ t, idx, value });
+            },
+        };
+        _ = try print_stmt;
+        try writer.print("\n", .{});
+        try writer.flush();
+    }
+};
+
+test "error_formatting" {
+    const allocator = std.testing.allocator;
+    const cases = .{
+        .{ ParserError{ .UnrecognizedLongOption = "--option" }, "unrecognized option: '--option'" },
+        .{ ParserError{ .UnrecognizedShortOption = 'o' }, "unrecognized option -- 'o'" },
+        .{ ParserError{ .UnexpectedPositionalArgument = "hello" }, "unexpected positional argument: 'hello'" },
+        .{ ParserError{ .UnexpectedLongOptionArgument = .{ "bar", "--foo" } }, "option '--foo' doesn't accept an argument; found: 'bar'" },
+        .{ ParserError{ .MissingLongOptionArgument = .{ "--foo", "TEXT" } }, "option '--foo' requires argument of type TEXT" },
+        .{ ParserError{ .MissingShortOptionArgument = .{ 'o', "TEXT" } }, "option requires argument of type TEXT -- 'o'" },
+        .{ ParserError{ .MissingPositionalArgument = .{ 0, "TEXT" } }, "missing positional argument TEXT at index 0" },
+        .{ ParserError{ .InvalidLongOptionArgument = .{ "hello", "--option", "INT" } }, "option '--option' expects argument of type INT; found: 'hello'" },
+        .{ ParserError{ .InvalidShortOptionArgument = .{ "hello", 'o', "INT" } }, "option expects argument of type INT -- 'o'; found: 'hello'" },
+        .{ ParserError{ .InvalidPositionalArgument = .{ "hello", 0, "INT" } }, "expected positional argument INT at index 0; found: 'hello'" },
+    };
+    inline for (cases) |case| {
+        const err, const expected = case;
+        var writer = std.Io.Writer.Allocating.init(allocator);
+        defer writer.deinit();
+        try err.print(&writer.writer);
+        const actual = try writer.toOwnedSlice();
+        defer allocator.free(actual);
+        try std.testing.expectEqualStrings("error: " ++ expected ++ "\n", actual);
+    }
+}
+
+pub fn ParserResult(comptime T: type) type {
+    return union(enum) {
+        result: T,
+        err: ParserError,
+        help: void,
+    };
+}
+
 /// our parser class
 /// tracks the arguments and short+long flags and the field index on the output type
 /// provides helper methods used to build the parser at compile-time (since type data is required)
@@ -648,40 +761,36 @@ pub const Parser = struct {
     /// - `--help` is a special case flag that will return `null`
     ///
     /// currently doesn't output helpful error messages e.g. which option/argument caused the error
-    pub fn parse(comptime self: Self, itr: tokenizer.Tokenizer) !?self.t {
+    pub fn parse(comptime self: Self, itr: tokenizer.Tokenizer) ParserResult(self.t) {
         var arg_idx: usize = 0;
         var tokens: [self.n()]?[]const u8 = @splat(null);
+        var readable_types: [self.n()][]const u8 = undefined;
+        inline for (@typeInfo(self.t).@"struct".field_types, 0..) |field_type, i| {
+            readable_types[i] = types.type_to_name(field_type);
+        }
+        var source: [self.n()]?ValueSource = @splat(null);
         var result = @as(*const self.t, @ptrCast(@alignCast(self.defaults))).*;
-        if (!self.exhaust and arg_idx == self.arguments.len) return result;
+        if (!self.exhaust and arg_idx == self.arguments.len) return .{ .result = result };
         while (itr.next()) |token| {
             if (std.mem.eql(u8, token, "--")) {
                 // special `--` argument - not sure what do with it yet
             } else if (std.mem.startsWith(u8, token, "--")) {
                 // long flag - unpack flag name & value + validate flag name
                 const flag, const maybe_value = unpackLongFlagToken(token);
-                const flag_name = extract_long_flag_name(flag) catch {
-                    std.debug.print("error: '{s}' is not a valid option\n", .{flag});
-                    return ParserError.InvalidOption;
-                };
-                if (std.mem.eql(u8, flag_name, "help")) return null;
+                const flag_name = extract_long_flag_name(flag);
+                if (std.mem.eql(u8, flag_name, "help")) return .{ .help = undefined };
                 if (self.long_flags.get(flag_name)) |ptr| {
                     if (ptr.bool_v) |value| {
                         // if it is a boolean flag, we should expect no corresponding ooption argument
-                        if (maybe_value) |_| {
-                            std.debug.print("error: option '{s}' doesn't accept an argument\n", .{flag});
-                            return ParserError.UnexpectedArgument;
-                        }
+                        if (maybe_value) |token_value| return .{ .err = .{ .UnexpectedLongOptionArgument = .{ token_value, flag } } };
                         tokens[ptr.idx] = if (value) "true" else "false";
                     } else {
                         // use the packaged value if provided, else use the next token as our option argument
-                        tokens[ptr.idx] = maybe_value orelse itr.next() orelse {
-                            std.debug.print("error: option '{s}' requires an argument\n", .{flag});
-                            return ParserError.MissingArgument;
-                        };
+                        tokens[ptr.idx] = maybe_value orelse itr.next() orelse return .{ .err = .{ .MissingLongOptionArgument = .{ flag, readable_types[ptr.idx] } } };
+                        source[ptr.idx] = .{ .long_flag = flag };
                     }
                 } else {
-                    std.debug.print("error: unrecognized option '{s}'\n", .{flag});
-                    return ParserError.UnrecognizedOption;
+                    return .{ .err = .{ .UnrecognizedLongOption = flag } };
                 }
             } else if (std.mem.startsWith(u8, token, "-") and token.len > 1) {
                 // short flag - multiple short flags can be grouped together in a single token
@@ -690,48 +799,43 @@ pub const Parser = struct {
                         if (self.short_flags[idx]) |ptr| {
                             if (ptr.bool_v) |value| {
                                 tokens[ptr.idx] = if (value) "true" else "false";
+                                source[ptr.idx] = .{ .short_flag = c };
                             } else {
                                 // short flags requiring a parameter either
                                 // - use the remaining token as the value
                                 // - use the next token as the value (if at the end)
                                 const value = token[i + 1 ..];
-                                tokens[ptr.idx] = if (value.len > 0) value else itr.next() orelse {
-                                    std.debug.print("error: option requires an argument -- '{c}'\n", .{c});
-                                    return ParserError.MissingArgument;
-                                };
+                                tokens[ptr.idx] = if (value.len > 0) value else itr.next() orelse return .{ .err = .{ .MissingShortOptionArgument = .{ c, readable_types[ptr.idx] } } };
+                                source[ptr.idx] = .{ .short_flag = c };
                                 break;
                             }
                         } else {
-                            std.debug.print("error: unrecognized option -- '{c}'\n", .{c});
-                            return ParserError.UnrecognizedOption;
+                            return .{ .err = .{ .UnrecognizedShortOption = c } };
                         }
                     } else {
-                        std.debug.print("error: invalid option -- '{c}'\n", .{c});
-                        return ParserError.InvalidOption;
+                        return .{ .err = .{ .UnrecognizedShortOption = c } };
                     }
                 }
             } else {
                 // argument - find the next argument we need to supply and place to token in the appropriate index
-                if (arg_idx >= self.arguments.len) {
-                    std.debug.print("error: unexpected argument '{s}'\n", .{token});
-                    return ParserError.UnexpectedArgument;
-                }
+                if (arg_idx >= self.arguments.len) return .{ .err = .{ .UnexpectedPositionalArgument = token } };
                 tokens[self.arguments[arg_idx]] = token;
+                source[self.arguments[arg_idx]] = .{ .positional = self.arguments[arg_idx] };
                 arg_idx += 1;
                 if (!self.exhaust and arg_idx == self.arguments.len) break;
             }
         }
-        if (arg_idx < self.arguments.len) {
-            std.debug.print("error: missing argument at index {d}\n", .{arg_idx});
-            return ParserError.MissingArgument;
-        }
-        inline for (@typeInfo(self.t).@"struct".field_names, @typeInfo(self.t).@"struct".field_types, tokens) |name, t, maybe_token| {
+        if (arg_idx < self.arguments.len) return .{ .err = .{ .MissingPositionalArgument = .{ arg_idx, readable_types[self.arguments[arg_idx]] } } };
+        inline for (@typeInfo(self.t).@"struct".field_names, @typeInfo(self.t).@"struct".field_types, tokens, 0..) |name, t, maybe_token, i| {
             if (maybe_token) |token| @field(result, name) = parseToken(t, token) orelse {
-                std.debug.print("error: invalid argument -- expected {s} got {s}\n", .{ types.type_to_name(t), token });
-                return ParserError.InvalidArgument;
+                return switch (source[i] orelse unreachable) {
+                    .long_flag => |flag| .{ .err = .{ .InvalidLongOptionArgument = .{ token, flag, readable_types[i] } } },
+                    .short_flag => |flag| .{ .err = .{ .InvalidShortOptionArgument = .{ token, flag, readable_types[i] } } },
+                    .positional => |idx| .{ .err = .{ .InvalidPositionalArgument = .{ token, idx, readable_types[i] } } },
+                };
             };
         }
-        return result;
+        return .{ .result = result };
     }
 };
 
@@ -741,14 +845,6 @@ pub fn ExhaustiveParser() Parser {
 pub fn NonExhaustiveParser() Parser {
     return Parser.empty.setExhaust(false);
 }
-
-pub const ParserError = error{
-    UnrecognizedOption,
-    UnexpectedArgument,
-    MissingArgument,
-    InvalidArgument,
-    InvalidOption,
-};
 
 /// long flags can be expressed by themselves or with their value
 /// this helps us extract the flag and optional value portions separately
@@ -799,7 +895,7 @@ test "arg_parser_datatypes" {
         .addArgument(f16);
 
     const expected: parser.outputType() = .{ true, false, "hello world", 123, 3.14 };
-    try std.testing.expectEqualDeep(expected, (try parser.parse(itr.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).result);
 }
 
 // check that multiple args and all data types can be handled
@@ -812,7 +908,7 @@ test "arg_parser_ignore_token" {
     const parser = ExhaustiveParser().addArgument([]const u8);
 
     const expected: parser.outputType() = .{"hello world"};
-    try std.testing.expectEqualDeep(expected, (try parser.parse(itr.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).result);
 }
 
 test "arg_parser_help_flag" {
@@ -824,7 +920,10 @@ test "arg_parser_help_flag" {
     // boolean long flags tested in different case
     var itr = try tokenizer.StringIterator.init(allocator, "--long-flag value --help");
     defer itr.deinit(allocator);
-    try std.testing.expectEqualDeep(null, try parser.parse(itr.asTokenizer()));
+    switch (parser.parse(itr.asTokenizer())) {
+        .help => {},
+        else => unreachable,
+    }
 }
 
 test "arg_parser_option_arg" {
@@ -843,10 +942,10 @@ test "arg_parser_option_arg" {
     var itr4 = try tokenizer.StringIterator.init(allocator, "-lvalue");
     defer itr4.deinit(allocator);
     const expected: parser.outputType() = .{"value"};
-    try std.testing.expectEqualDeep(expected, (try parser.parse(itr1.asTokenizer())).?);
-    try std.testing.expectEqualDeep(expected, (try parser.parse(itr2.asTokenizer())).?);
-    try std.testing.expectEqualDeep(expected, (try parser.parse(itr3.asTokenizer())).?);
-    try std.testing.expectEqualDeep(expected, (try parser.parse(itr4.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr1.asTokenizer()).result);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr2.asTokenizer()).result);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr3.asTokenizer()).result);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr4.asTokenizer()).result);
 }
 
 test "arg_parser_multi_short_flag" {
@@ -865,15 +964,15 @@ test "arg_parser_multi_short_flag" {
     var itr3 = try tokenizer.StringIterator.init(allocator, "-ytvalue");
     defer itr3.deinit(allocator);
     const expected1: parser.outputType() = .{ true, "value" };
-    try std.testing.expectEqualDeep(expected1, (try parser.parse(itr1.asTokenizer())).?);
-    try std.testing.expectEqualDeep(expected1, (try parser.parse(itr2.asTokenizer())).?);
-    try std.testing.expectEqualDeep(expected1, (try parser.parse(itr3.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected1, parser.parse(itr1.asTokenizer()).result);
+    try std.testing.expectEqualDeep(expected1, parser.parse(itr2.asTokenizer()).result);
+    try std.testing.expectEqualDeep(expected1, parser.parse(itr3.asTokenizer()).result);
 
     // - moving t after y should make it part of `-y` value
     var itr4 = try tokenizer.StringIterator.init(allocator, "-tyvalue");
     defer itr4.deinit(allocator);
     const expected2: parser.outputType() = .{ false, "yvalue" };
-    try std.testing.expectEqualDeep(expected2, (try parser.parse(itr4.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected2, parser.parse(itr4.asTokenizer()).result);
 }
 
 test "arg_parser_bool_flag" {
@@ -886,15 +985,15 @@ test "arg_parser_bool_flag" {
     defer itr1.deinit(allocator);
     var itr2 = try tokenizer.StringIterator.init(allocator, "-y");
     defer itr2.deinit(allocator);
-    try std.testing.expectEqualDeep(.{true}, (try parser.parse(itr1.asTokenizer())).?);
-    try std.testing.expectEqualDeep(.{true}, (try parser.parse(itr2.asTokenizer())).?);
+    try std.testing.expectEqualDeep(.{true}, parser.parse(itr1.asTokenizer()).result);
+    try std.testing.expectEqualDeep(.{true}, parser.parse(itr2.asTokenizer()).result);
 
     var itr3 = try tokenizer.StringIterator.init(allocator, "--no");
     defer itr3.deinit(allocator);
     var itr4 = try tokenizer.StringIterator.init(allocator, "-n");
     defer itr4.deinit(allocator);
-    try std.testing.expectEqualDeep(.{false}, (try parser.parse(itr3.asTokenizer())).?);
-    try std.testing.expectEqualDeep(.{false}, (try parser.parse(itr4.asTokenizer())).?);
+    try std.testing.expectEqualDeep(.{false}, parser.parse(itr3.asTokenizer()).result);
+    try std.testing.expectEqualDeep(.{false}, parser.parse(itr4.asTokenizer()).result);
 }
 
 test "arg_parser_no_exhaust" {
@@ -906,20 +1005,19 @@ test "arg_parser_no_exhaust" {
     var itr1 = try tokenizer.StringIterator.init(allocator, "\"hello world\" -y");
     defer itr1.deinit(allocator);
     const expected1: parser.outputType() = .{ false, "hello world" };
-    try std.testing.expectEqualDeep(expected1, (try parser.parse(itr1.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected1, parser.parse(itr1.asTokenizer()).result);
 
     // in this case, option is ignored because arguments are populated before it
     var itr2 = try tokenizer.StringIterator.init(allocator, "-y \"hello world\"");
     defer itr2.deinit(allocator);
     const expected2: parser.outputType() = .{ true, "hello world" };
-    try std.testing.expectEqualDeep(expected2, (try parser.parse(itr2.asTokenizer())).?);
+    try std.testing.expectEqualDeep(expected2, parser.parse(itr2.asTokenizer()).result);
 }
 
 // error test cases:
 // - [x] missing positional argument
 // - [x] extra positional argument
 // - [x] long flags
-//   - [x] invalid flag
 //   - [x] unrecognized flag
 //   - [x] argument for boolean flag
 //   - [x] missing argument
@@ -928,44 +1026,39 @@ test "arg_parser_no_exhaust" {
 //   - [x] unrecognized flag
 //   - [x] missing argument
 // - [x] type parsing failure
+//   - [x] positional arguments
+//   - [x] long flags
+//   - [x] short flags
 
 test "arg_parser_missing_pos_arg" {
     const allocator = std.testing.allocator;
-    var itr = try tokenizer.StringIterator.init(allocator, "hello world");
+    var itr = try tokenizer.StringIterator.init(allocator, "hello world --foo baz");
     defer itr.deinit(allocator);
+
+    const expected: ParserError = .{ .MissingPositionalArgument = .{ 2, "TEXT" } };
 
     const parser = ExhaustiveParser()
         .addArgument([]const u8)
         .addArgument([]const u8)
-        .addArgument([]const u8);
+        .addArgument([]const u8)
+        .addOption("--foo", []const u8, "bar");
 
-    try std.testing.expectError(ParserError.MissingArgument, parser.parse(itr.asTokenizer()));
+    try std.testing.expectEqualDeep(expected, parser.parse((itr.asTokenizer())).err);
 }
 
 test "arg_parser_unexpected_pos_arg" {
     const allocator = std.testing.allocator;
-    var itr = try tokenizer.StringIterator.init(allocator, "foo bar baz");
+    var itr = try tokenizer.StringIterator.init(allocator, "foo bar --hello baz");
     defer itr.deinit(allocator);
+
+    const expected: ParserError = .{ .UnexpectedPositionalArgument = "baz" };
 
     const parser = ExhaustiveParser()
         .addArgument([]const u8)
-        .addArgument([]const u8);
+        .addArgument([]const u8)
+        .addFlag("--hello");
 
-    try std.testing.expectError(ParserError.UnexpectedArgument, parser.parse(itr.asTokenizer()));
-}
-
-test "arg_parser_invalid_long_flag" {
-    const allocator = std.testing.allocator;
-
-    const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
-
-    var itr1 = try tokenizer.StringIterator.init(allocator, "--long-fl@g value");
-    defer itr1.deinit(allocator);
-    var itr2 = try tokenizer.StringIterator.init(allocator, "--long-fl@g=value");
-    defer itr2.deinit(allocator);
-    const expected = ParserError.InvalidOption;
-    try std.testing.expectError(expected, parser.parse(itr1.asTokenizer()));
-    try std.testing.expectError(expected, parser.parse(itr2.asTokenizer()));
+    try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).err);
 }
 
 test "arg_parser_unrecognized_long_flag" {
@@ -977,29 +1070,37 @@ test "arg_parser_unrecognized_long_flag" {
     defer itr1.deinit(allocator);
     var itr2 = try tokenizer.StringIterator.init(allocator, "--unknown-flag=value");
     defer itr2.deinit(allocator);
-    const expected = ParserError.UnrecognizedOption;
-    try std.testing.expectError(expected, parser.parse(itr1.asTokenizer()));
-    try std.testing.expectError(expected, parser.parse(itr2.asTokenizer()));
+
+    const expected: ParserError = .{ .UnrecognizedLongOption = "--unknown-flag" };
+
+    try std.testing.expectEqualDeep(expected, parser.parse(itr1.asTokenizer()).err);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr2.asTokenizer()).err);
 }
 
 test "arg_parser_missing_long_flag_arg" {
     const allocator = std.testing.allocator;
 
+    const expected: ParserError = .{ .MissingLongOptionArgument = .{ "--long-flag", "TEXT" } };
+
     const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
 
     var itr = try tokenizer.StringIterator.init(allocator, "--long-flag");
     defer itr.deinit(allocator);
-    try std.testing.expectError(ParserError.MissingArgument, parser.parse(itr.asTokenizer()));
+
+    try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).err);
 }
 
 test "arg_parser_unexpected_long_flag_arg" {
     const allocator = std.testing.allocator;
 
+    const expected: ParserError = .{ .UnexpectedLongOptionArgument = .{ "value", "--long-flag" } };
+
     const parser = ExhaustiveParser().addFlag("--long-flag,-l");
 
     var itr = try tokenizer.StringIterator.init(allocator, "--long-flag=value");
     defer itr.deinit(allocator);
-    try std.testing.expectError(ParserError.UnexpectedArgument, parser.parse(itr.asTokenizer()));
+
+    try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).err);
 }
 
 test "arg_parser_invalid_short_flag" {
@@ -1012,9 +1113,10 @@ test "arg_parser_invalid_short_flag" {
     defer itr1.deinit(allocator);
     var itr2 = try tokenizer.StringIterator.init(allocator, "-@value");
     defer itr2.deinit(allocator);
-    const expected = ParserError.InvalidOption;
-    try std.testing.expectError(expected, parser.parse(itr1.asTokenizer()));
-    try std.testing.expectError(expected, parser.parse(itr2.asTokenizer()));
+    const expected: ParserError = .{ .UnrecognizedShortOption = '@' };
+
+    try std.testing.expectEqualDeep(expected, parser.parse(itr1.asTokenizer()).err);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr2.asTokenizer()).err);
 }
 
 test "arg_parser_unrecognized_short_flag" {
@@ -1030,10 +1132,11 @@ test "arg_parser_unrecognized_short_flag" {
     // also check that `-y` gets treated as an unexpected option rather than swallowed as a value of flag `-t`
     var itr3 = try tokenizer.StringIterator.init(allocator, "-tyvalue");
     defer itr3.deinit(allocator);
-    const expected = ParserError.UnrecognizedOption;
-    try std.testing.expectError(expected, parser.parse(itr1.asTokenizer()));
-    try std.testing.expectError(expected, parser.parse(itr2.asTokenizer()));
-    try std.testing.expectError(expected, parser.parse(itr3.asTokenizer()));
+    const expected: ParserError = .{ .UnrecognizedShortOption = 'y' };
+
+    try std.testing.expectEqualDeep(expected, parser.parse(itr1.asTokenizer()).err);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr2.asTokenizer()).err);
+    try std.testing.expectEqualDeep(expected, parser.parse(itr3.asTokenizer()).err);
 }
 
 test "arg_parser_missing_short_flag_arg" {
@@ -1043,22 +1146,30 @@ test "arg_parser_missing_short_flag_arg" {
 
     var itr = try tokenizer.StringIterator.init(allocator, "-l");
     defer itr.deinit(allocator);
-    const expected = ParserError.MissingArgument;
-    try std.testing.expectError(expected, parser.parse(itr.asTokenizer()));
+    const expected: ParserError = .{ .MissingShortOptionArgument = .{ 'l', "TEXT" } };
+
+    try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).err);
 }
 
 // set up cases where parsing each supported data type will fail
-// expect an 'invalid argument value' error
-test "arg_parser_invalid_datatypes" {
+test "arg_parser_invalid_pos_arg_value" {
     const allocator = std.testing.allocator;
+
     var invalid_bool_itr = try tokenizer.StringIterator.init(allocator, "tru3 false 123 3.14");
     defer invalid_bool_itr.deinit(allocator);
     var invalid_opt_itr = try tokenizer.StringIterator.init(allocator, "true fals3 123 3.14");
     defer invalid_opt_itr.deinit(allocator);
-    var invalid_int_itr = try tokenizer.StringIterator.init(allocator, "true false 1230 3.14");
+    var invalid_int_itr = try tokenizer.StringIterator.init(allocator, "true false 123o 3.14");
     defer invalid_int_itr.deinit(allocator);
     var invalid_float_itr = try tokenizer.StringIterator.init(allocator, "true false 123 3.1.4");
     defer invalid_float_itr.deinit(allocator);
+
+    const cases = .{
+        .{ &invalid_bool_itr, ParserError{ .InvalidPositionalArgument = .{ "tru3", 0, "BOOL" } } },
+        .{ &invalid_opt_itr, ParserError{ .InvalidPositionalArgument = .{ "fals3", 1, "BOOL" } } },
+        .{ &invalid_int_itr, ParserError{ .InvalidPositionalArgument = .{ "123o", 2, "INT" } } },
+        .{ &invalid_float_itr, ParserError{ .InvalidPositionalArgument = .{ "3.1.4", 3, "FLOAT" } } },
+    };
 
     // bool, optional, string, int, float
     const parser = ExhaustiveParser()
@@ -1067,9 +1178,64 @@ test "arg_parser_invalid_datatypes" {
         .addArgument(u8)
         .addArgument(f16);
 
-    const expected = ParserError.InvalidArgument;
-    try std.testing.expectError(expected, parser.parse(invalid_bool_itr.asTokenizer()));
-    try std.testing.expectError(expected, parser.parse(invalid_opt_itr.asTokenizer()));
-    try std.testing.expectError(expected, parser.parse(invalid_int_itr.asTokenizer()));
-    try std.testing.expectError(expected, parser.parse(invalid_float_itr.asTokenizer()));
+    inline for (cases) |case| {
+        const itr, const expected = case;
+        try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).err);
+    }
+}
+
+test "arg_parser_invalid_long_opt_arg_value" {
+    const allocator = std.testing.allocator;
+
+    var invalid_opt_itr = try tokenizer.StringIterator.init(allocator, "--opt1 123o");
+    defer invalid_opt_itr.deinit(allocator);
+    var invalid_int_itr = try tokenizer.StringIterator.init(allocator, "--opt2 123o");
+    defer invalid_int_itr.deinit(allocator);
+    var invalid_float_itr = try tokenizer.StringIterator.init(allocator, "--opt3 3.1.4");
+    defer invalid_float_itr.deinit(allocator);
+
+    const cases = .{
+        .{ &invalid_opt_itr, ParserError{ .InvalidLongOptionArgument = .{ "123o", "--opt1", "INT" } } },
+        .{ &invalid_int_itr, ParserError{ .InvalidLongOptionArgument = .{ "123o", "--opt2", "INT" } } },
+        .{ &invalid_float_itr, ParserError{ .InvalidLongOptionArgument = .{ "3.1.4", "--opt3", "FLOAT" } } },
+    };
+
+    // bool, optional, string, int, float
+    const parser = ExhaustiveParser()
+        .addOption("--opt1,-1", ?u8, null)
+        .addOption("--opt2,-2", u8, 0)
+        .addOption("--opt3,-3", f16, 1.0);
+
+    inline for (cases) |case| {
+        const itr, const expected = case;
+        try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).err);
+    }
+}
+
+test "arg_parser_invalid_short_opt_arg_value" {
+    const allocator = std.testing.allocator;
+
+    var invalid_opt_itr = try tokenizer.StringIterator.init(allocator, "-1 123o");
+    defer invalid_opt_itr.deinit(allocator);
+    var invalid_int_itr = try tokenizer.StringIterator.init(allocator, "-2 123o");
+    defer invalid_int_itr.deinit(allocator);
+    var invalid_float_itr = try tokenizer.StringIterator.init(allocator, "-3 3.1.4");
+    defer invalid_float_itr.deinit(allocator);
+
+    const cases = .{
+        .{ &invalid_opt_itr, ParserError{ .InvalidShortOptionArgument = .{ "123o", '1', "INT" } } },
+        .{ &invalid_int_itr, ParserError{ .InvalidShortOptionArgument = .{ "123o", '2', "INT" } } },
+        .{ &invalid_float_itr, ParserError{ .InvalidShortOptionArgument = .{ "3.1.4", '3', "FLOAT" } } },
+    };
+
+    // bool, optional, string, int, float
+    const parser = ExhaustiveParser()
+        .addOption("--opt1,-1", ?u8, null)
+        .addOption("--opt2,-2", u8, 0)
+        .addOption("--opt3,-3", f16, 1.0);
+
+    inline for (cases) |case| {
+        const itr, const expected = case;
+        try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).err);
+    }
 }
