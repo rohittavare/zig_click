@@ -11,6 +11,7 @@ const tokenizer = @import("tokenizer.zig");
 const command = @import("command.zig");
 const context = @import("context.zig");
 const group = @import("group.zig");
+const types = @import("types.zig");
 
 /// stored the output & potential errors of a command run
 /// since output is generated at runtime & allocated by the runner
@@ -121,14 +122,22 @@ pub const CliRunner = struct {
     }
 };
 
+const outputStream = enum {
+    stdout,
+    stderr,
+};
+
 const echoTestCommand = command.Command("echo_test_command", "basic test command to print out data received by the handler")
-    .flag("--stderr/--stdout", "whether to print values to stdout or stderr")
+    .option("--print-to", outputStream, outputStream.stdout, "which stream to output to")
     .option("--echo-me,-e", ?[]const u8, null, "echo the contents of this flag's arguments")
     .argument([]const u8, "command line contents to echo")
     .handler(handler);
 
-fn handler(ctx: context.Context, use_stderr: bool, echo_opn: ?[]const u8, echo_arg: []const u8) !void {
-    const writer = if (use_stderr) ctx.stderr else ctx.stdout;
+fn handler(ctx: context.Context, print_to: outputStream, echo_opn: ?[]const u8, echo_arg: []const u8) !void {
+    const writer = switch (print_to) {
+        .stdout => ctx.stdout,
+        .stderr => ctx.stderr,
+    };
 
     // echo stdin
     const stdin = try ctx.stdin.allocRemaining(ctx.gpa, .unlimited);
@@ -158,7 +167,8 @@ test "command_help_message" {
         \\  0: TEXT                     command line contents to echo
         \\
         \\OPTIONS:
-        \\         --stderr/--stdout    whether to print values to stdout or stderr
+        \\         --print-to=outputStream
+        \\                              which stream to output to
         \\  -e,    --echo-me=TEXT       echo the contents of this flag's arguments
         \\
         \\
@@ -184,7 +194,7 @@ test "command_runner_stdin" {
 test "command_runner_to_stderr" {
     const runner = CliRunner.init(echoTestCommand);
     try runner.runTest(RunnerConfig{
-        .args = "\"\" --stderr",
+        .args = "\"\" --print-to stderr",
         .stdin = "this goes to stderr",
     }, RunResult{
         .stderr = "this goes to stderr\n",

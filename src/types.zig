@@ -11,7 +11,7 @@ const std = @import("std");
 /// booleans are omitted as they should be implemented using flags
 pub inline fn is_supported_option_type(comptime t: type) bool {
     return switch (@typeInfo(t)) {
-        .int, .float => true,
+        .int, .float, .@"enum" => true,
         .optional => |o| is_supported_option_type(o.child),
         .pointer => |p| (p.size == .slice and p.attrs.@"const" and p.child == u8),
         else => false,
@@ -22,7 +22,7 @@ pub inline fn is_supported_option_type(comptime t: type) bool {
 /// in the future it may be possible to support arbitrary slices or arrays using variadic arguments
 pub inline fn is_supported_argument_type(comptime t: type) bool {
     return switch (@typeInfo(t)) {
-        .int, .float, .bool => true,
+        .int, .float, .bool, .@"enum" => true,
         .optional => |o| is_supported_argument_type(o.child),
         .pointer => |p| (p.size == .slice and p.attrs.@"const" and p.child == u8),
         else => false,
@@ -64,9 +64,19 @@ pub inline fn type_to_name(comptime t: type) []const u8 {
         .bool => "BOOL",
         .optional => |o| type_to_name(o.child),
         .pointer => |p| if (p.size == .slice and p.attrs.@"const" and p.child == u8) "TEXT",
+        .@"enum" => comptime enum_name: {
+            const full_name = @typeName(t);
+            const dot_idx = std.mem.findLast(u8, full_name, ".") orelse break :enum_name full_name;
+            break :enum_name full_name[dot_idx + 1 ..];
+        },
         else => unreachable,
     };
 }
+
+const testEnum = enum {
+    foo,
+    bar,
+};
 
 test "type_to_name_conversion" {
     try std.testing.expectEqualStrings("FLOAT", type_to_name(f16));
@@ -79,4 +89,6 @@ test "type_to_name_conversion" {
     try std.testing.expectEqualStrings("INT", type_to_name(i16));
     // unwrap optionals
     try std.testing.expectEqualStrings("TEXT", type_to_name(?[]const u8));
+    // enum
+    try std.testing.expectEqualStrings("testEnum", type_to_name(testEnum));
 }

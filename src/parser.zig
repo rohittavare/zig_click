@@ -288,9 +288,17 @@ pub fn parseToken(comptime t: type, token: []const u8) ?t {
             if (p.size == .slice and p.attrs.@"const" and p.child == u8) return token;
             return null;
         },
+        .@"enum" => {
+            return std.meta.stringToEnum(t, token);
+        },
         else => return null,
     }
 }
+
+const testEnum = enum {
+    foo,
+    bar,
+};
 
 test "parse_token" {
     try std.testing.expectEqual(@as(i32, 10), parseToken(i32, "10").?); // int
@@ -299,6 +307,7 @@ test "parse_token" {
     try std.testing.expectEqual(false, parseToken(bool, "false").?); // bool false
     try std.testing.expectEqualStrings("hello", parseToken([]const u8, "hello").?); // string types
     try std.testing.expectEqual(@as(?bool, true), parseToken(?bool, "true").?); // handling optional types
+    try std.testing.expectEqual(testEnum.foo, parseToken(testEnum, "foo").?);
 }
 
 test "parse_token_fail" {
@@ -311,6 +320,7 @@ test "parse_token_fail" {
         .{ "10", *u8 }, // pointers unsupported
         .{ "1000", ?u8 }, // handling optional types
         .{ "10,3,8", [3]u8 }, // unsupported array type
+        .{ "baz", testEnum }, // no enum match
     };
     inline for (test_cases) |case| {
         const token, const t = case;
