@@ -33,15 +33,11 @@ pub const CommandStruct = struct {
 
     // these comptime functions help us construct
     // more complex types based on the parser data shape
-    inline fn n(comptime self: Self) usize {
-        return @typeInfo(self.parser.t).@"struct".field_names.len;
-    }
     inline fn handlerT(comptime self: Self) type {
-        return @Fn([_]type{context.Context} ++ @typeInfo(self.parser.t).@"struct".field_types, &@as([self.n() + 1]std.builtin.Type.Fn.ParamAttributes, @splat(std.builtin.Type.Fn.ParamAttributes{})), anyerror!void, std.builtin.Type.Fn.Attributes{});
+        return @Fn([_]type{context.Context} ++ @typeInfo(self.parser.t).@"struct".field_types, &@as([self.parser.n() + 1]std.builtin.Type.Fn.ParamAttributes, @splat(std.builtin.Type.Fn.ParamAttributes{})), anyerror!void, std.builtin.Type.Fn.Attributes{});
     }
     inline fn handlerPtrT(comptime self: Self) type {
-        const handler_t = self.handlerT();
-        return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, handler_t, null);
+        return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, self.handlerT(), null);
     }
 
     pub inline fn option(comptime self: Self, comptime declaration: []const u8, comptime opT: type, comptime def: opT, comptime help: []const u8) Self {

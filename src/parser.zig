@@ -449,7 +449,7 @@ pub const Parser = struct {
     has_args: bool,
 
     const Self = @This();
-    inline fn n(comptime self: Self) usize {
+    pub inline fn n(comptime self: Self) usize {
         return @typeInfo(self.t).@"struct".field_names.len;
     }
     const empty = Self{

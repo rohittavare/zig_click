@@ -78,6 +78,8 @@ pub const CliRunner = struct {
         defer env_map.deinit();
         for (cfg.env) |env_pair| try env_map.put(env_pair.@"0", env_pair.@"1");
 
+        var kv: std.StringHashMap(*const anyopaque) = .init(arena.allocator());
+
         const ctx = context.Context{
             .io = io,
             .gpa = allocator,
@@ -88,6 +90,8 @@ pub const CliRunner = struct {
             .stdin = &stdin,
             .stdout = &stdout.writer,
             .stderr = &stderr.writer,
+
+            .kv = &kv,
         };
 
         const result = self.command_or_group.invoke(ctx, itr.asTokenizer());
@@ -312,4 +316,58 @@ test "command_group" {
     try runner.runTest(RunnerConfig{ .args = "foo \"hello world\"" }, RunResult{ .stdout = "foo hello world" });
     try runner.runTest(RunnerConfig{ .args = "bar \"hello world\"" }, RunResult{ .stdout = "bar hello world" });
     try runner.runTest(RunnerConfig{ .args = "nested-group baz \"hello world\"" }, RunResult{ .stdout = "baz hello world" });
+}
+
+const PrintsContextValue = command.Command("print-ctx", "prints the value help by specified keys in the shared CLI context")
+    .argument([]const u8, "the name of the key to lookup")
+    .handler(printContext);
+
+fn printContext(ctx: context.Context, k: []const u8) !void {
+    if (ctx.get([]const u8, k)) |v| {
+        try ctx.stdout.print("key '{s}' points to value '{s}'!\n", .{ k, v });
+    } else {
+        try ctx.stdout.print("key '{s}' doesn't exist\n", .{k});
+    }
+    try ctx.stdout.flush();
+}
+
+const ContextCommandGroup = group.Group("ctx-group", "a command group which persists values to subcommands via the shared context")
+    .option("--foo", ?[]const u8, null, "writes the provided value to key 'foo' in the context")
+    .subcommand(PrintsContextValue)
+    .handler(setContext);
+
+fn setContext(ctx: context.Context, foo_opt: ?[]const u8) !void {
+    if (foo_opt) |v| {
+        try ctx.put("foo", v);
+    }
+}
+
+test "group_context" {
+    const runner = CliRunner.init(ContextCommandGroup);
+
+    try runner.runTest(.{ .args = "--foo bar print-ctx foo" }, .{ .stdout = "key 'foo' points to value 'bar'!\n" });
+    try runner.runTest(.{ .args = "print-ctx foo" }, .{ .stdout = "key 'foo' doesn't exist\n" });
+    try runner.runTest(.{ .args = "--foo bar print-ctx bar" }, .{ .stdout = "key 'bar' doesn't exist\n" });
+}
+
+test "group_option_help" {
+    const expected =
+        \\a command group which persists values to subcommands via the shared context
+        \\
+        \\USAGE:
+        \\  ctx-group [OPTION]... [COMMAND]
+        \\
+        \\COMMANDS:
+        \\  print-ctx                   prints the value help by specified keys in the 
+        \\                                shared CLI context 
+        \\
+        \\OPTIONS:
+        \\         --foo=TEXT           writes the provided value to key 'foo' in the 
+        \\                                context 
+        \\
+        \\
+    ;
+
+    const runner = CliRunner.init(ContextCommandGroup);
+    try runner.runTest(.{ .args = "--help" }, .{ .stderr = expected });
 }

@@ -56,6 +56,10 @@ pub inline fn prefixTupleType(comptime T: type, comptime prependT: type) type {
     return @Tuple(&([1]type{prependT} ++ @typeInfo(T).@"struct".field_types.*));
 }
 
+pub inline fn truncateTupleType(comptime T: type) type {
+    return @Tuple(@typeInfo(T).@"struct".field_types[0 .. (@typeInfo(T).@"struct".field_types.len) - 1]);
+}
+
 test "extend_tuple_type" {
     const expected = struct { bool, usize, []const u8 };
     const actual = extendTupleType(struct { bool, usize }, []const u8);
@@ -96,6 +100,21 @@ pub fn prefixTuple(comptime T: type, comptime prependT: type, tup: T, maybe_prep
         @field(ret, new_field_n) = @as(new_field_t, @field(tup, old_field_n));
     }
     if (maybe_prepend) |prepend| @field(ret, next_field_ns[0]) = @as(next_field_ts[0], prepend);
+    return ret;
+}
+
+pub fn truncateTuple(comptime T: type, tup: T) truncateTupleType(T) {
+    const newT = truncateTupleType(T);
+
+    const next_field_ts = @typeInfo(newT).@"struct".field_types;
+    const next_field_ns = @typeInfo(newT).@"struct".field_names;
+    var ret: newT = undefined;
+
+    const old_field_ns = @typeInfo(T).@"struct".field_names;
+    if (old_field_ns.len == 0) @compileError("cannot truncate tuple with no fields: " ++ @typeName(T));
+    inline for (old_field_ns[0 .. old_field_ns.len - 1], next_field_ns, next_field_ts) |old_field_n, new_field_n, new_field_t| {
+        @field(ret, new_field_n) = @as(new_field_t, @field(tup, old_field_n));
+    }
     return ret;
 }
 
