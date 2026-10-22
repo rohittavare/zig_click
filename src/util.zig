@@ -174,3 +174,69 @@ test "set_array_index_begin" {
     const initial = [_]u8{ 'h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd', '.' };
     try std.testing.expectEqualSlices(u8, &expected, setArrComptime(u8, 12, &initial, 0, 'y'));
 }
+
+/// a generic type to help us wrap and store values as opaque types
+/// this allows us to store the mixed typing of parser arguments
+/// without needing complex generics/type manipulation
+pub fn Container(comptime t: type) type {
+    return struct { inner: t };
+}
+
+pub inline fn toOpaquePtrComptime(comptime payload: anytype) *const anyopaque {
+    return @ptrCast(&Container(@TypeOf(payload)){ .inner = payload });
+}
+
+pub fn toOpaquePtr(arena: *std.heap.ArenaAllocator, payload: anytype) !*const anyopaque {
+    const container = try arena.allocator().create(Container(@TypeOf(payload)));
+    container.* = .{ .inner = payload };
+    return @ptrCast(container);
+}
+
+pub fn fromOpaquePtr(comptime t: type, ptr: *const anyopaque) t {
+    return @as(*const Container(t), @ptrCast(@alignCast(ptr))).*.inner;
+}
+
+fn add(a: usize, b: usize) usize {
+    return a + b;
+}
+fn sub(a: usize, b: usize) usize {
+    return a - b;
+}
+
+test "to_from_opaque_ptr_comptime" {
+    try std.testing.expectEqual(@as(usize, 10), fromOpaquePtr(usize, toOpaquePtrComptime(@as(usize, 10))));
+    try std.testing.expectEqual(@as(f16, 3.14), fromOpaquePtr(f16, toOpaquePtrComptime(@as(f16, 3.14))));
+    try std.testing.expectEqualStrings("hello world!", fromOpaquePtr([]const u8, toOpaquePtrComptime(@as([]const u8, "hello world!"))));
+    try std.testing.expectEqual(@as(?[]const u8, null), fromOpaquePtr(?[]const u8, toOpaquePtrComptime(@as(?[]const u8, null))));
+    try std.testing.expectEqual(true, fromOpaquePtr(bool, toOpaquePtrComptime(true)));
+
+    const add_ptr = toOpaquePtrComptime(&add);
+    const sub_ptr = toOpaquePtrComptime(&sub);
+
+    var fn_ptr = fromOpaquePtr(*const fn (usize, usize) usize, add_ptr);
+    try std.testing.expectEqual(10, fn_ptr(5, 5));
+
+    fn_ptr = fromOpaquePtr(*const fn (usize, usize) usize, sub_ptr);
+    try std.testing.expectEqual(0, fn_ptr(5, 5));
+}
+
+test "to_from_opaque_ptr" {
+    const allocator = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    try std.testing.expectEqual(@as(usize, 10), fromOpaquePtr(usize, try toOpaquePtr(&arena, @as(usize, 10))));
+    try std.testing.expectEqual(@as(f16, 3.14), fromOpaquePtr(f16, try toOpaquePtr(&arena, @as(f16, 3.14))));
+    try std.testing.expectEqualStrings("hello world!", fromOpaquePtr([]const u8, try toOpaquePtr(&arena, @as([]const u8, "hello world!"))));
+    try std.testing.expectEqual(@as(?[]const u8, null), fromOpaquePtr(?[]const u8, try toOpaquePtr(&arena, @as(?[]const u8, null))));
+    try std.testing.expectEqual(true, fromOpaquePtr(bool, try toOpaquePtr(&arena, true)));
+
+    const add_ptr = try toOpaquePtr(&arena, &add);
+    const sub_ptr = try toOpaquePtr(&arena, &sub);
+
+    var fn_ptr = fromOpaquePtr(*const fn (usize, usize) usize, add_ptr);
+    try std.testing.expectEqual(10, fn_ptr(5, 5));
+
+    fn_ptr = fromOpaquePtr(*const fn (usize, usize) usize, sub_ptr);
+    try std.testing.expectEqual(0, fn_ptr(5, 5));
+}

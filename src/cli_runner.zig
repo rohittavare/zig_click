@@ -68,39 +68,16 @@ pub const CliRunner = struct {
         var itr = try tokenizer.StringIterator.init(allocator, cfg.args);
         defer itr.deinit(allocator);
 
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        defer arena.deinit();
+        const ctx: context.MockedContext = try .init(io, allocator, cfg.env, cfg.stdin);
+        defer ctx.deinit();
 
-        var stdin = std.Io.Reader.fixed(cfg.stdin);
-        var stdout = std.Io.Writer.Allocating.init(allocator);
-        var stderr = std.Io.Writer.Allocating.init(allocator);
+        const result = self.command_or_group.invoke(ctx.context(), itr.asTokenizer());
 
-        var env_map = std.process.Environ.Map.init(allocator);
-        defer env_map.deinit();
-        for (cfg.env) |env_pair| try env_map.put(env_pair.@"0", env_pair.@"1");
-
-        var kv: std.StringHashMap(*const anyopaque) = .init(arena.allocator());
-
-        const ctx = context.Context{
-            .io = io,
-            .gpa = allocator,
-
-            .arena = &arena,
-            .environ_map = &env_map,
-
-            .stdin = &stdin,
-            .stdout = &stdout.writer,
-            .stderr = &stderr.writer,
-
-            .kv = &kv,
-        };
-
-        const result = self.command_or_group.invoke(ctx, itr.asTokenizer());
-
+        const stdout, const stderr = try ctx.getOutput(allocator);
         var ret = RunResult{
             .allocator = &allocator,
-            .stdout = try stdout.toOwnedSlice(),
-            .stderr = try stderr.toOwnedSlice(),
+            .stdout = stdout,
+            .stderr = stderr,
         };
         _ = result catch |err| {
             ret.err = err;
