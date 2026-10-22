@@ -182,6 +182,18 @@ const testEnum = enum {
     bar,
 };
 
+fn split_str(ctx: context.Context, token: []const u8) !?[]const []const u8 {
+    const n_commas = std.mem.countScalar(u8, token, ',');
+    const elements = try ctx.arena.allocator().alloc([]const u8, n_commas + 1);
+    var itr = std.mem.splitScalar(u8, token, ',');
+    var i: usize = 0;
+    while (itr.next()) |e| {
+        elements[i] = e;
+        i += 1;
+    }
+    return elements;
+}
+
 test "parse_token" {
     const cases = .{
         .{ i32, "10", null, null, @as(i32, 10) },
@@ -199,6 +211,11 @@ test "parse_token" {
         .{ u8, "1000", null, null, null },
         .{ f16, "null", null, null, null },
         .{ bool, "foo", null, null, null },
+        // choices
+        .{ []const u8, "foo", &.{ "foo", "bar" }, null, "foo" },
+        .{ []const u8, "baz", &.{ "foo", "bar" }, null, null }, // invalid choice
+        // handler
+        .{ []const []const u8, "hello,world", null, &split_str, &.{ "hello", "world" } },
     };
 
     const ctx: context.MockedContext = .initTest(.{}, "");
