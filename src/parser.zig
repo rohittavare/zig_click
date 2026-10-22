@@ -6,6 +6,9 @@
 //! for the purposes of CLI arguments, optional inputs are specified using flags. These are represented as
 //! a word or contiguous phrase prefixed by two dashes (long flag) - long flags can only contain alphanumeric, '-' and '_' characters
 //! or an alphanumeric character prefixed by a single dash (short flag)
+//!
+//! arguments are positional - not specified by a flag, and are processed in the order declared
+//! but can be mixed between options
 
 const std = @import("std");
 const tokenizer = @import("tokenizer.zig");
@@ -13,14 +16,22 @@ const util = @import("util.zig");
 const types = @import("types.zig");
 const context = @import("context.zig");
 
+/// function pointer for argument handlers
+/// accepts Context and string inputs and returns the desired type
+/// (or null if cannot be parsed)
 fn arg_handler_t(comptime t: type) type {
     return *const fn (context.Context, []const u8) anyerror!?t;
 }
+/// slice of a particular type
 fn arg_choice_t(comptime t: type) type {
     return []const t;
 }
+/// opaque pointer type
+/// used to store values of known/mixed types
+/// without needing generics/type embeded in the parent type
 const any_t = *const anyopaque;
 
+// ========== command and flag name validations ==========
 /// command names are allowed alphanumeric characters, `-` and `_`
 pub fn validCommandName(name: []const u8) bool {
     if (name.len == 0) return false;
@@ -137,6 +148,8 @@ test "parse_short_flag_decl" {
     }
 }
 
+// ========== end command and flag name validations ==========
+
 /// parse a token to the desired data type
 /// only int, float, bool and string types supported natively
 /// otherwise a custom handler is required to parse the data type
@@ -198,23 +211,24 @@ test "parse_token" {
     }
 }
 
+// ========== Begin Parser ==========
+
 /// We need the following information about each parser element:
-/// +---------------------------------------------------------------------------+
-/// |          | parameters |                      config                       |
-/// |==========+============+===================================================|
-/// |  flag    | - decl     | - help:    []const u8 ................ = ""       | is there already long or short flag specified
-/// |----------+------------+---------------------------------------------------|
-/// | option   | - decl     | - help:    []const u8 ................ = ""       | is there already
-/// |          | - type     | - default: ?T ........................ = null     | - long or short flag specified
-/// |          |            | - handler: ?fn (Context, []const u8) T = null     | possible kinds: count,
-/// |          |            | - choices: ?[]const []const u8 ....... = null     |
-/// |----------+------------+---------------------------------------------------|
-/// | argument | - type     | - help:    []const u8 ................ = ""       | is there already a...
-/// |          |            | - kind:    ArgumentKind .............. = .regular | - command
-/// |          |            | - handler: ?fn (Context, []const u8) T = null     | - variadic
-/// |          |            | - choices: ?[]const []const u8 ....... = null     | - passthrough
-/// |          |            | - name:    ?[]const u8 ............... = null     |
-/// +---------------------------------------------------------------------------+
+/// +------------------------------------------------------------------------------------+
+/// |          | parameters |                         config                             |
+/// |==========+============+============================================================|
+/// |  flag    | - decl     | - help:    []const u8 ......................... = ""       | is there already long or short flag specified
+/// |----------+------------+------------------------------------------------------------|
+/// | option   | - decl     | - help:    []const u8 ......................... = ""       | is there already
+/// |          | - type     | - default: ?T ................................. = null     | - long or short flag specified
+/// |          |            | - handler: ?*const fn (Context, []const u8) !?T = null     | possible kinds: count,
+/// |          |            | - choices: ?[]const []const u8 ................ = null     |
+/// |----------+------------+------------------------------------------------------------|
+/// | argument | - type     | - help:    []const u8 ......................... = ""       | is there already a...
+/// |          |            | - kind:    ArgumentKind ....................... = .regular | - regular, passthrough, command, variadic types
+/// |          |            | - handler: ?*const fn (Context, []const u8) !?T = null     | - variadic
+/// |          |            | - choices: ?[]const []const u8 ................ = null     | - passthrough
+/// +------------------------------------------------------------------------------------+
 ///
 /// When building the output:
 /// Construct the tuple:
@@ -247,6 +261,9 @@ test "parse_token" {
 /// - know the raw type
 /// our custom return type that integrates a successful parse, error and help-message states
 ///
+
+//  Parser Result and Error Types
+
 /// the parser's result
 /// - result: the tuple containing parsed values (shape is defined by parser & registered args/opts)
 /// - err: custom error type specifiying additional error information
@@ -259,8 +276,15 @@ pub fn ParserResult(comptime T: type) type {
     };
 }
 /// a custom error class to work around limitations in error unions in zig
-/// persist relevant information for a particular error to the caller
-/// the caller can decide to print this to stderr or hanlde errors in different ways
+/// we don't want to output formatted error messages to the screen from directly within the Parser
+/// i.e. we don't want to circumvent the traditional error-handling process
+/// BUT errors themselves cannot store any contextual information e.g. the flag/token being parsed
+///
+/// In order to carry this information back to the caller, we use our own enum
+/// at the expense that `try` and `catch` keywords will not work for these errors
+/// we will need to access the errors using a union/switch statement on our `ParserResult` struct.
+///
+/// we also include a helper for writing the error message to the screen
 pub const ParserError = union(enum) {
     UnrecognizedLongOption: []const u8,
     UnrecognizedShortOption: u8,
@@ -343,44 +367,106 @@ test "error_formatting" {
     }
 }
 
-// Configs - specifying optional settings for arguments, options and flags
+//  Parser Configs
+//  Configs are a common Zig pattern to specify optional function parameters
+//  and define default values without cluttering the function signature.
+
+/// Sepcify optional parameters to customize argument behavior
 pub fn ArgumentConfig(comptime arg_t: type) type {
     return struct {
+        /// determines the argument's parsing behavior. see `ArgumentKind` for more info
         kind: ArgumentKind = .Positional,
+        /// a descriptive string for understanding argument usage
+        ///
+        /// not applicable for passthrough arguments
         help: []const u8 = "",
+        /// function used to parse raw tokens into the intended argument type e.g. to perform validation, post-processing, deserialize complex structures
+        ///
+        /// not applicable for passthrough arguments
         handler: ?arg_handler_t(arg_t) = null,
+        /// specify a finite list of acceptable argument values
+        ///
+        /// not applicable for passthrough arguments
         choice: ?arg_choice_t(arg_t) = null,
     };
 }
+/// Determines the argument's parsing behavior
 pub const ArgumentKind = enum {
+    /// accepts a single command line token
     Positional,
+    /// supports arbitrarily many command line tokens; will consume all remaining positional tokens. Must be placed after any `Positional` arguments
+    ///
+    /// resulting argument type is a const slice of the original type
     Variadic,
+    /// used for capturing arbitrarily many raw tokens e.g. for passing to a subprocess. captures all tokens following `--`. Must be placed after any `Positional` and `Variadic` arguments
     Passthrough,
+    /// a special internal type used to indicate test arguments specifying a subcommand to run
     Command,
 };
 
+/// Sepcify optional parameters to customize option behavior.
+///
+/// applies specifically to options with *required* arguments. See `FlagConfig` for non-argumentative options
 pub fn OptionConfig(comptime op_t: type) type {
     return struct {
+        /// a long flag (regex: `--[a-zA-Z0-9_\-]+`) to represent this option
         long: ?[]const u8 = null,
+        /// a short flag (regex: `-[a-zA-Z0-9]`) to represent this option
         short: ?[]const u8 = null,
+        /// a default value when option is not specific.
+        /// automatically `null` for optional (`?..`) types.
+        /// required for non-optional types
+        ///
+        /// not applicable for variadic options
         default: ?op_t = null,
+        /// a descriptive string for understanding option usage
         help: []const u8 = "",
+        /// function used to parse raw tokens into the intended type e.g. to perform validation, post-processing, deserialize complex structures
         handler: ?arg_handler_t(op_t) = null,
+        /// specify a finite list of acceptable values
         choice: ?arg_choice_t(op_t) = null,
+        /// whether to accept arbitrarily many values.
+        /// the resulting type is a const slice of the original type
         variadic: bool = false,
     };
 }
 
+/// Sepcify optional parameters to customize option behavior.
+///
+/// applies specifically to non-argumentative options. See `OptionConfig` for options requiring arguments
 pub const FlagConfig = struct {
-    long: ?[]const u8 = null,
-    short: ?[]const u8 = null,
+    /// specify the flag's behavior. See `FlagKind` for more info
     kind: FlagKind = .Boolean,
+    /// a long flag (regex: `--[a-zA-Z0-9_\-]+`) to represent this option.
+    /// for boolean options, represents the `true` value
+    ///
+    /// optionally include a *negative* flag separated by forward slash (`/`) for boolean options to represent the `false` value
+    /// e.g. `--yes/--no`
+    long: ?[]const u8 = null,
+    /// a short flag (regex: `-[a-zA-Z0-9]`) to represent this option.
+    /// for boolean options, represents the `true` value
+    ///
+    /// optionally include a *negative* flag separated by forward slash (`/`) for boolean options to represent the `false` value
+    /// e.g. `-y/-n`
+    short: ?[]const u8 = null,
+    /// a descriptive string for understanding option usage
     help: []const u8 = "",
 };
+/// Determines the behavior fo non-argumentative options
 pub const FlagKind = enum {
+    /// the presence of the flag should indicate a `true` or `false` value.
+    /// the resulting option type is `bool`
     Boolean,
+    /// the option's value should be based on the number of times the flag appears on the command line.
+    /// the resulting option type is `usize`
     Count,
 };
+
+// Internal Representations
+// Structures used to enable the desired functionality & interface for our parser
+// not intended for external use.
+//
+// see `Parser` and `Parser.parse(...)` for more information
 
 const FlagPtr = struct {
     field_idx: usize,
@@ -391,6 +477,11 @@ const ArgPtr = struct {
     kind: ArgumentKind,
 };
 
+/// The main data structure powering the `Parser`
+///
+/// It is responsible for holding information about each output field and
+/// defines the logic of how string tokens collected at runtime should be used
+/// to produce the final value.
 const Field = union(enum) {
     scalar: ScalarFieldInfo,
     variadic: VariadicFieldInfo,
