@@ -392,8 +392,8 @@ const ArgPtr = struct {
 };
 
 const Field = union(enum) {
-    scalar: ScalarFieldType,
-    variadic: VariadicFieldType,
+    scalar: ScalarFieldInfo,
+    variadic: VariadicFieldInfo,
     count: void,
 
     fn initCount() Field {
@@ -417,7 +417,7 @@ const Field = union(enum) {
         } };
     }
 
-    const ScalarFieldType = struct {
+    const ScalarFieldInfo = struct {
         t: type,
         // expect to be type `t`
         default: ?any_t,
@@ -426,7 +426,7 @@ const Field = union(enum) {
         // expect to be type `[]const t`
         choice: ?any_t,
     };
-    const VariadicFieldType = struct {
+    const VariadicFieldInfo = struct {
         t: type,
         // expect to be type `*const fn(Context, []const u8) !?t`
         handler: ?any_t,
@@ -470,7 +470,7 @@ const Field = union(enum) {
         };
     }
 
-    fn getFieldBuilder(self: Field) FieldBuilder {
+    fn getFieldCaptureGroup(self: Field) FieldCaptureGroup {
         return switch (self) {
             .scalar => .{ .scalar = null },
             .variadic => .{ .variadic = .empty },
@@ -478,12 +478,35 @@ const Field = union(enum) {
         };
     }
 
-    const FieldBuilder = union(enum) {
+    fn build(comptime self: Field, ctx: context.Context, capture_group: FieldCaptureGroup) !BuildResult(self.getFieldType()) {
+        switch (self) {
+            .scalar => |info| {
+                if (capture_group.scalar) |capture| return .{ .result = try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_choice_t(info.t), info.choice), util.fromOpaquePtrMaybe(arg_handler_t(info.t), info.hander)) orelse return .{ .err = capture.invalidArgument() } };
+                return .{ .result = util.fromOpaquePtrMaybe(info.t, info.default) orelse undefined };
+            },
+            .variadic => |info| {
+                var values: std.ArrayList(info.t) = .empty;
+                defer values.deinit(ctx.gpa);
+                for (capture_group.variadic.items) |capture| try values.append(capture.as(ctx.gpa, try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_choice_t(info.t), info.choice), util.fromOpaquePtrMaybe(arg_handler_t(info.t), info.handler)) orelse return .{ .err = capture.invalidArgument() }));
+                return .{ .result = values.toOwnedSlice(ctx.arena.allocator()) };
+            },
+            .count => return .{ .result = capture_group.count.items.len },
+        }
+    }
+
+    fn BuildResult(comptime t: type) type {
+        return union(enum) {
+            result: t,
+            err: ParserError,
+        };
+    }
+
+    const FieldCaptureGroup = union(enum) {
         scalar: ?Capture,
         variadic: std.ArrayList(Capture),
         count: std.ArrayList(CommandLineSource),
 
-        fn deinit(self: FieldBuilder, allocator: std.mem.Allocator) void {
+        fn deinit(self: FieldCaptureGroup, allocator: std.mem.Allocator) void {
             switch (self) {
                 .variadic => |v| v.deinit(allocator),
                 .count => |v| v.deinit(allocator),
@@ -491,35 +514,16 @@ const Field = union(enum) {
             }
         }
 
-        fn deinitSlice(slice: []const FieldBuilder, allocator: std.mem.Allocator) void {
+        fn deinitSlice(slice: []const FieldCaptureGroup, allocator: std.mem.Allocator) void {
             for (slice) |capture| capture.deinit(allocator);
         }
 
-        fn acceptCount(self: *FieldBuilder, allocator: std.mem.Allocator, source: anytype) !void {
+        fn accept(self: *FieldCaptureGroup, allocator: std.mem.Allocator, source: anytype, capture: ?Capture.Inner) !void {
             const src: CommandLineSource = .init(source);
             switch (self) {
-                .scalar, .variadic => unreachable,
-                .count => self.count.append(allocator, src),
-            }
-        }
-
-        fn acceptValue(self: *FieldBuilder, allocator: std.mem.Allocator, source: anytype, value: any_t) !void {
-            const src: CommandLineSource = .init(source);
-            const inner: Capture.Inner = .{ .value = value };
-            switch (self) {
-                .scalar => self.scalar = .{ .inner = inner, .source = src },
-                .variadic => try self.variadic.append(allocator, .{ .inner = inner, .source = src }),
-                .count => unreachable,
-            }
-        }
-
-        fn acceptToken(self: *FieldBuilder, allocator: std.mem.Allocator, source: anytype, token: []const u8) !void {
-            const src: CommandLineSource = .init(source);
-            const inner: Capture.Inner = .{ .token = token };
-            switch (self) {
-                .scalar => self.scalar = .{ .inner = inner, .source = src },
-                .variadic => try self.variadic.append(allocator, .{ .inner = inner, .source = src }),
-                .count => unreachable,
+                .scalar => self.scalar = .{ .source = src, .inner = capture.? },
+                .variadic => try self.variadic.append(allocator, .{ .source = src, .inner = capture.? }),
+                .count => if (capture) |_| unreachable else try self.count.append(allocator, src),
             }
         }
 
@@ -530,6 +534,14 @@ const Field = union(enum) {
             const Inner = union(enum) {
                 token: []const u8,
                 value: any_t,
+
+                fn initValue(v: any_t) Inner {
+                    return .{ .value = v };
+                }
+
+                fn initToken(t: []const u8) Inner {
+                    return .{ .token = t };
+                }
             };
 
             fn as(self: Capture, comptime t: type, ctx: context.Context, choice: ?arg_choice_t(t), handler: ?arg_handler_t(t)) !?t {
@@ -675,6 +687,7 @@ pub const Parser = struct {
                         .optional => if (cfg.default) |_| @compileError("options with default values should be changed to non-optional type"),
                         else => if (cfg.default == null) @compileError("non-optional types require a default value, or should be changed to an optional type"),
                     }
+                    if (cfg.default != null and cfg.choice != null and !std.mem.containsAtLeastScalar(op_t, cfg.choice.?, cfg.default.?, 1)) @compileError("default value '" ++ cfg.default.? ++ "' is not one of specified choices: " ++ cfg.choice.?);
                     break :resolve_field .{ .scalar = .{
                         .t = op_t,
                         .default = if (cfg.default) |default| util.toOpaquePtrComptime(default) else null,
@@ -754,9 +767,9 @@ pub const Parser = struct {
     pub fn parse(comptime self: Parser, ctx: context.Context, itr: tokenizer.Tokenizer) !ParserResult(self.t()) {
         const arg_idx: usize = 0;
 
-        var field_captures: [self.n()]Field.FieldBuilder = undefined;
-        inline for (self.fields, 0..) |field_info, i| field_captures[i] = field_info.getFieldBuilder();
-        defer Field.FieldBuilder.deinitSlice(field_captures, ctx.gpa);
+        var capture_groups: [self.n()]Field.FieldCaptureGroup = undefined;
+        inline for (self.fields, 0..) |field_info, i| capture_groups[i] = field_info.getFieldCaptureGroup();
+        defer Field.FieldCaptureGroup.deinitSlice(capture_groups, ctx.gpa);
 
         // if (!self.exhaust and arg_idx == self.arguments.len) return .{ .result = result };
         while (itr.next()) |token| {
@@ -765,21 +778,21 @@ pub const Parser = struct {
             } else if (std.mem.startsWith(u8, token, "--")) {
                 // long flag - unpack flag name & value + validate flag name
                 const flag_name, const maybe_value = unpackLongFlagToken(token).?;
-                const src: Field.FieldBuilder.CommandLineSource = .init(flag_name);
+                const src: Field.FieldCaptureGroup.CommandLineSource = .init(flag_name);
                 if (std.mem.eql(u8, flag_name, "help")) return .help;
                 if (self.long_flags.get(flag_name)) |ptr| {
                     switch (self.fields[ptr.field_idx]) {
                         .count => {
                             if (maybe_value) |token_value| return .{ .err = .{ .UnexpectedLongOptionArgument = .{ token_value, flag_name } } };
-                            try field_captures[ptr.field_idx].acceptCount(ctx.gpa, src);
+                            try capture_groups[ptr.field_idx].acceptCount(ctx.gpa, src);
                         },
                         .scalar, .variadic => {
                             if (ptr.value) |value| {
                                 if (maybe_value) |token_value| return .{ .err = .{ .UnexpectedLongOptionArgument = .{ token_value, flag_name } } };
-                                try field_captures[ptr.field_idx].acceptValue(ctx.gpa, src, value);
+                                try capture_groups[ptr.field_idx].acceptValue(ctx.gpa, src, value);
                             } else {
                                 const value = maybe_value orelse return .{ .err = .{ .MissingLongOptionArgument = flag_name } };
-                                try field_captures[ptr.field_idx].acceptToken(ctx.gpa, src, value);
+                                try capture_groups[ptr.field_idx].acceptToken(ctx.gpa, src, value);
                             }
                         },
                     }
@@ -789,17 +802,17 @@ pub const Parser = struct {
             } else if (std.mem.startsWith(u8, token, "-") and token.len > 1) {
                 // short flag - multiple short flags can be grouped together in a single token
                 for (token[1..], 1..) |c, i| {
-                    const src: Field.FieldBuilder.CommandLineSource = .init(c);
+                    const src: Field.FieldCaptureGroup.CommandLineSource = .init(c);
                     if (charToIdx(c)) |idx| {
                         if (self.short_flags[idx]) |ptr| {
                             switch (self.fields[ptr.field_idx]) {
-                                .count => try field_captures[ptr.field_idx].acceptCount(ctx.gpa, src),
+                                .count => try capture_groups[ptr.field_idx].acceptCount(ctx.gpa, src),
                                 .scalar, .variadic => {
                                     if (ptr.value) |value| {
-                                        try field_captures[ptr.field_idx].acceptValue(ctx.gpa, src, value);
+                                        try capture_groups[ptr.field_idx].acceptValue(ctx.gpa, src, value);
                                     } else {
                                         const value = if (token.len - i > 1) token[i + 1 ..] else itr.next() orelse return .{ .err = .{ .MissingShortOptionArgument = c } };
-                                        try field_captures[ptr.field_idx].acceptToken(ctx.gpa, src, value);
+                                        try capture_groups[ptr.field_idx].acceptToken(ctx.gpa, src, value);
                                         break;
                                     }
                                 },
@@ -814,8 +827,8 @@ pub const Parser = struct {
                 if (arg_idx >= self.arguments.len) return .{ .err = .{ .UnexpectedPositionalArgument = token } };
                 const value = token;
                 const ptr = self.arguments[arg_idx];
-                const src: Field.FieldBuilder.CommandLineSource = if (ptr.kind == .Command) .initCommand() else .init(arg_idx);
-                try field_captures[ptr.field_idx].acceptToken(ctx.gpa, src, value);
+                const src: Field.FieldCaptureGroup.CommandLineSource = if (ptr.kind == .Command) .initCommand() else .init(arg_idx);
+                try capture_groups[ptr.field_idx].acceptToken(ctx.gpa, src, value);
                 if (!self.exhaust and arg_idx == self.arguments.len) break;
             }
         }
@@ -825,22 +838,10 @@ pub const Parser = struct {
             else => {},
         };
         var result: self.t() = undefined;
-        inline for (@typeInfo(self.t()).@"struct".field_names, self.fields, field_captures) |name, field, field_capture| {
-            @field(result, name) = resolve_field: switch (field_capture) {
-                .scalar => |maybe_capture| {
-                    if (maybe_capture) |capture| {
-                        break :resolve_field try capture.as(field.getTokenType(), ctx, field.getChoiceComptime(), field.getHanlderComptime()) orelse return capture.invalidArgument();
-                    } else {
-                        break :resolve_field field.getDefault();
-                    }
-                },
-                .variadic => |captures| {
-                    var values: std.ArrayList(field.getTokenType()) = .empty;
-                    defer values.deinit(ctx.gpa);
-                    for (captures.items) |capture| try values.append(ctx.gpa, try capture.as(field.getTokenType(), ctx, field.getChoiceComptime(), field.getHanlderComptime())) orelse return capture.invalidArgument();
-                    break :resolve_field values.toOwnedSlice(ctx.arena.allocator());
-                },
-                .count => |count| count.items.len,
+        inline for (@typeInfo(self.t()).@"struct".field_names, self.fields, 0..) |name, field, i| {
+            @field(result, name) = switch (try field.build(ctx, capture_groups[i])) {
+                .result => |value| value,
+                .err => |err| return .{ .err = err },
             };
         }
         return .{ .result = result };

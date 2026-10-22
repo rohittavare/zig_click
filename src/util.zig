@@ -192,8 +192,12 @@ pub fn toOpaquePtr(arena: *std.heap.ArenaAllocator, payload: anytype) !*const an
     return @ptrCast(container);
 }
 
-pub fn fromOpaquePtr(comptime t: type, ptr: *const anyopaque) t {
+pub fn fromOpaquePtr(comptime t: type, ptr: ?*const anyopaque) t {
     return @as(*const Container(t), @ptrCast(@alignCast(ptr))).*.inner;
+}
+
+pub fn fromOpaquePtrMaybe(comptime t: type, maybe_ptr: ?*const anyopaque) ?t {
+    return if (maybe_ptr) |ptr| fromOpaquePtr(t, ptr) else null;
 }
 
 fn add(a: usize, b: usize) usize {
