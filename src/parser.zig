@@ -3,12 +3,56 @@
 //! Parsing tools to interpret comptile-time flag declarations, used to build the CLI
 //! and construct supported data types from string, used to construct arguments during runtime
 //!
+//! ## Understanding the Supported Inputs
+//!
 //! for the purposes of CLI arguments, optional inputs are specified using flags. These are represented as
 //! a word or contiguous phrase prefixed by two dashes (long flag) - long flags can only contain alphanumeric, '-' and '_' characters
 //! or an alphanumeric character prefixed by a single dash (short flag)
 //!
 //! arguments are positional - not specified by a flag, and are processed in the order declared
 //! but can be mixed between options
+//!
+//! much of the behaviors of command processing is mostly based on [this blog post](https://nullprogram.com/blog/2020/08/01/)
+//! (with the exception of optional argument options, which are not supported as of now).
+//!
+//! ## Understanding the Parser design and implementation
+//!
+//! In order to understand why the parser is built this way, we need to understand the purpose of this library. The goal is in three parts:
+//! 1. command multiplexer - more than just being able to query inputs supplied to the CLI, we want to make it easy to construct CLI tools by automatically invoking the appropriate logic and routing inputs correctly
+//! 2. functional interface - similar to python's `click` library, enable us to build a parser definition step by step. each group/command is constructed separately with their own args/options defined
+//! 3. validate as much as possible at compiletime
+//!
+//! In python `click`, all commands/groups are automatically bound to a function by virtue of the interface built off function decorators.
+//! This becomes the mechanism for `click` to know which logic to invoke when a (sub)command is specified and CLI inputs are routed through
+//! the decorated function's parameters. Python allows us to invoke arbitrary functions using programmatically determined inputs by unpacking
+//! a dict/tuple/list of keywords or values.
+//!
+//! Zig doesn't support function decorators, so in order to achieve (2) we take a functional approach, chaining methods together to one-by-one
+//! regiser inputs from the command line, each method returning an updated `Parser` object. In Zig, return values which are not yet written
+//! to a variable are `const`. When we chain a methods, parsers returned at each stem are `const` and cannot be manipulated. We need to
+//! return a new parser based on the previous parser we built
+//!
+//! In order to achieve (1) we will need to invoke functions (which may be known at compile-time) but not known at the time of writing this library.
+//! Python allows us to invoke arbitrary functions using programmatically determined inputs by unpacking a dict/tuple/list of keywords or values.
+//! Thankfully zig allows us to invoke function pointers using the `@call()` builtin. In order to use this we need to supply our inputs as a tuple.
+//!
+//! How do we write code to call a function using a tuple, when we don't know what tuple we need to build, and the exact steps/values to build this tuple
+//! may only be known at runtime? Our target tuple type is dependent on our function's signature, which is dependent on the registered CLI args/opts.
+//! Since type data is only available at compile-time, it means we need our CLI args/opts to also be compile-time known. This give us a few nice synergies:
+//! - functional-style chaining operates on `const` intermediate values, which avoid our users from declaring their CLI builders as `comptime var` or performing this work at runtime instead. Then can just assign the final value to `const` variable
+//! - having the CLI fully defined at comptime allows us to validate the choice of features & settings at compile-time as well, allowing us to build for (3)
+//!
+//! However, working mostly in comptime provides a few challenges: the order of arguments supplied in the CLI is only runtime-known. How do we parse and build
+//! the correct types when typing data is compile-time known, but input order (and what subcommands to invoke) is runtime known?
+//!
+//! We need to break down the parsing process into two steps:
+//! 1. perform all type conversions and building in compile-time known blocks purely from the function signature i.e. `inline for`
+//! 2. perform runtime work to identify supplied inputs and organize them into a deterministic shape as per (1)
+//!
+//! The `Field` class is responsible for holding type data and other associated option/argument characteristics in a compile-time known shape
+//! These generate `FieldCaptureGroup`s which can freely be used and interacted at runtime to store raw un-parsed string tokens from the CLI
+//! Since args & options can be specified in any order, and options can map to multiple flags we use 'Pointers' to map each flag & positional argument to its corresponding field
+//! The ordering of `Field`s, `FieldCaptureGroup`s and Arg/Opt 'Pointers' all need to be consistent with each other to work at both compile-time and runtime.
 
 const std = @import("std");
 const tokenizer = @import("tokenizer.zig");
@@ -689,6 +733,7 @@ const Field = union(enum) {
     };
 };
 
+/// drives the construction and execution of command line argument processing
 pub const Parser = struct {
     fields: []const Field = &.{},
 
