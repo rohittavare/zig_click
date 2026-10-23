@@ -15,7 +15,7 @@ pub fn Command(comptime name: []const u8, comptime description: []const u8) Comm
     return CommandStruct{
         .name = name,
         .description = description,
-        .parser = parser.ExhaustiveParser(),
+        .parser = .initExhaustive(),
     };
 }
 

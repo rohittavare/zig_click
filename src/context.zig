@@ -7,25 +7,27 @@ const std = @import("std");
 const util = @import("util.zig");
 
 pub const MockedContext = struct {
+    allocator: std.mem.Allocator,
     ctx: *Context,
+    env: *std.process.Environ.Map,
     stdout_buf: *std.Io.Writer.Allocating,
     stderr_buf: *std.Io.Writer.Allocating,
 
     pub fn context(self: MockedContext) Context {
-        return self.ctx;
+        return self.ctx.*;
     }
 
-    pub fn initTest(env_vars: []const struct { []const u8, []const u8 }, stdin: []const u8) !MockedContext {
-        return .init(std.testing.io, std.testing.allocator, env_vars, stdin);
+    pub fn initTest(stdin: []const u8, env_vars: anytype) !MockedContext {
+        return .init(std.testing.io, std.testing.allocator, stdin, env_vars);
     }
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, env_vars: []const struct { []const u8, []const u8 }, stdin_buf: []const u8) !MockedContext {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, stdin_buf: []const u8, env_vars: anytype) !MockedContext {
         const arena = try allocator.create(std.heap.ArenaAllocator);
         arena.* = .init(allocator);
 
         const env = try allocator.create(std.process.Environ.Map);
         env.* = .init(allocator);
-        for (env_vars) |pair| try env.put(pair.@"0", pair.@"1");
+        inline for (env_vars) |pair| try env.put(pair.@"0", pair.@"1");
 
         const stdin = try allocator.create(std.Io.Reader);
         stdin.* = .fixed(stdin_buf);
@@ -37,10 +39,12 @@ pub const MockedContext = struct {
         stderr_buf.* = .init(allocator);
 
         const ctx = try allocator.create(Context);
-        ctx.* = .init(io, allocator, arena, env, stdin, &stdout_buf.writer, &stderr_buf.writer);
+        ctx.* = try .init(io, allocator, arena, env, stdin, &stdout_buf.writer, &stderr_buf.writer);
 
         return .{
+            .allocator = allocator,
             .ctx = ctx,
+            .env = env,
             .stdout_buf = stdout_buf,
             .stderr_buf = stderr_buf,
         };
@@ -55,20 +59,20 @@ pub const MockedContext = struct {
 
     pub fn deinit(self: MockedContext) void {
         self.ctx.arena.deinit();
-        self.ctx.gpa.destroy(self.ctx.arena);
+        self.allocator.destroy(self.ctx.arena);
 
-        self.ctx.environ_map.deinit();
-        self.ctx.gpa.destroy(self.ctx.environ_map);
+        self.env.deinit();
+        self.allocator.destroy(self.env);
 
-        self.ctx.gpa.destroy(self.ctx.stdin);
+        self.allocator.destroy(self.ctx.stdin);
 
         self.stdout_buf.deinit();
-        self.ctx.gpa.destroy(self.stdout_buf);
+        self.allocator.destroy(self.stdout_buf);
         self.stderr_buf.deinit();
-        self.ctx.gpa.destroy(self.stderr_buf);
+        self.allocator.destroy(self.stderr_buf);
 
         self.ctx.deinit();
-        self.ctx.gpa.destroy(self.ctx);
+        self.allocator.destroy(self.ctx);
     }
 };
 
@@ -89,7 +93,7 @@ pub const Context = struct {
         io: std.Io,
         allocator: std.mem.Allocator,
         arena: *std.heap.ArenaAllocator,
-        env: *const std.process.Environ,
+        env: *const std.process.Environ.Map,
         stdin_reader: *std.Io.Reader,
         stdout_writer: *std.Io.Writer,
         stderr_writer: *std.Io.Writer,
@@ -107,6 +111,8 @@ pub const Context = struct {
             .stdin = stdin_reader,
             .stdout = stdout_writer,
             .stderr = stderr_writer,
+
+            .kv = kv,
         };
     }
 
@@ -115,7 +121,7 @@ pub const Context = struct {
     }
 
     pub fn deinit(self: Context) void {
-        self.kv.deinit(self.gpa);
+        self.kv.deinit();
         self.gpa.destroy(self.kv);
     }
 

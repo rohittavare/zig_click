@@ -53,6 +53,11 @@
 //! These generate `FieldCaptureGroup`s which can freely be used and interacted at runtime to store raw un-parsed string tokens from the CLI
 //! Since args & options can be specified in any order, and options can map to multiple flags we use 'Pointers' to map each flag & positional argument to its corresponding field
 //! The ordering of `Field`s, `FieldCaptureGroup`s and Arg/Opt 'Pointers' all need to be consistent with each other to work at both compile-time and runtime.
+//!
+//! Finally tracking all these types at compile-time can get really complex, especially since we are dealing with multiple tuple types, function pointer types
+//! built off these tuples, and manipulating these types as we add arguments/options. This makes generics a huge pain, because the nested types become part of the parent type
+//! it becomes impossible to store containers with different nested types side-by-side (i.e. commands with different arguments under the same command group).
+//! We make the decision to store everything type-erased, given that we will make sure that desining the system such that the original and expected types are identical
 
 const std = @import("std");
 const tokenizer = @import("tokenizer.zig");
@@ -92,7 +97,7 @@ test "valid_command_name" {
         .{ "", false },
         .{ "hello world", false },
     };
-    for (cases) |case| {
+    inline for (cases) |case| {
         const input, const expected = case;
         try std.testing.expectEqual(expected, validCommandName(input));
     }
@@ -166,7 +171,7 @@ test "parse_long_flag_decl" {
         .{ "--yes/", null },
         .{ "yes", null },
     };
-    for (cases) |case| {
+    inline for (cases) |case| {
         const input, const expected = case;
         try std.testing.expectEqualDeep(expected, parseLongOptDecl(input));
     }
@@ -186,9 +191,9 @@ test "parse_short_flag_decl" {
         .{ "-y/", null },
         .{ "y", null },
     };
-    for (cases) |case| {
+    inline for (cases) |case| {
         const input, const expected = case;
-        try std.testing.expectEqualDeep(expected, parseLongOptDecl(input));
+        try std.testing.expectEqualDeep(expected, parseShortOptDecl(input));
     }
 }
 
@@ -201,7 +206,7 @@ test "parse_short_flag_decl" {
 /// returns null when the datatype is unsupported or failure during parsing
 fn parseTokenNative(comptime t: type, token: []const u8) ?t {
     return switch (@typeInfo(t)) {
-        .optional => |o| try parseTokenNative(o.child, token) orelse null,
+        .optional => |o| parseTokenNative(o.child, token) orelse null,
         .int => std.fmt.parseInt(t, token, 10) catch null,
         .float => std.fmt.parseFloat(t, token) catch null,
         .bool => if (std.mem.eql(u8, token, "true")) true else if (std.mem.eql(u8, token, "false")) false else null,
@@ -216,9 +221,10 @@ fn parseTokenNative(comptime t: type, token: []const u8) ?t {
 /// the parsing function may accept a context object to do any necessary memory allocations
 /// if no parsing function is provided, tokens will be parsed using `parseTokenNative` and unsupported types will automatically return null
 fn parseToken(comptime t: type, ctx: context.Context, token: []const u8, choice: ?arg_choice_t(t), handler: ?arg_handler_t(t)) !?t {
+    const val: t = (if (handler) |h| try h(ctx, token) else parseTokenNative(t, token)) orelse return null;
     // check the token is within the choices
-    const val: t = if (handler) |h| try h(ctx, token) else parseTokenNative(t, token);
-    return if (choice) |c| if (std.mem.findScalar(t, c, val)) val else null;
+    if (choice) |c| if (!std.mem.containsAtLeastScalar(t, c, val, 1)) return null;
+    return val;
 }
 
 const testEnum = enum {
@@ -262,12 +268,12 @@ test "parse_token" {
         .{ []const []const u8, "hello,world", null, &split_str, &.{ "hello", "world" } },
     };
 
-    const ctx: context.MockedContext = .initTest(.{}, "");
+    const ctx: context.MockedContext = try .initTest("", .{});
     defer ctx.deinit();
 
     inline for (cases) |case| {
         const t: type = case.@"0";
-        _, const token: []const u8, const choice: ?[]const t, const handler: ?fn (context.Context, []const u8) anyerror!?t, const expected: t = case;
+        _, const token: []const u8, const choice: ?arg_choice_t(t), const handler: ?arg_handler_t(t), const expected: ?t = case;
         try std.testing.expectEqualDeep(expected, try parseToken(t, ctx.context(), token, choice, handler));
     }
 }
@@ -380,7 +386,7 @@ pub const ParserError = union(enum) {
             .MissingLongOptionArgument => |flag| writer.print("option '--{s}' requires an argument", .{flag}),
             .MissingShortOptionArgument => |flag| writer.print("option requires an argument -- '{c}'", .{flag}),
             .MissingPositionalArgument => |idx| writer.print("missing positional argument at index {d}", .{idx}),
-            .MissingCommand => writer.print("please specify a command"),
+            .MissingCommand => writer.print("please specify a command", .{}),
 
             .InvalidLongOptionArgument => |err| {
                 const value, const flag = err;
@@ -523,29 +529,17 @@ pub const FlagKind = enum {
     Count,
 };
 
-// Internal Representations
-// Structures used to enable the desired functionality & interface for our parser
-// not intended for external use.
-//
-// see `Parser` and `Parser.parse(...)` for more information
-
-const FlagPtr = struct {
-    field_idx: usize,
-    value: ?any_t,
-};
-const ArgPtr = struct {
-    field_idx: usize,
-    kind: ArgumentKind,
-};
-
 /// The main data structure powering the `Parser`
 ///
 /// It is responsible for holding information about each output field and
 /// defines the logic of how string tokens collected at runtime should be used
 /// to produce the final value.
 const Field = union(enum) {
+    /// represents a field accepting a single value
     scalar: ScalarFieldInfo,
+    /// represents a field accepting an arbitrary number of values (even zero)
     variadic: VariadicFieldInfo,
+    /// represents a field which does not store values from the CLI, just a count of occurrances
     count: void,
 
     fn initCount() Field {
@@ -586,6 +580,8 @@ const Field = union(enum) {
         choice: ?any_t,
     };
 
+    /// returns the expected output type for this field
+    /// taking into account the field type (variadic, scalar, count)
     inline fn getFieldType(comptime self: Field) type {
         return switch (self.field_type) {
             .scalar => |t| t.@"0",
@@ -593,35 +589,10 @@ const Field = union(enum) {
             .count => usize,
         };
     }
-    inline fn getTokenType(comptime self: Field) ?type {
-        return switch (self.field_type) {
-            .scalar => |t| t.@"0",
-            .variadic => |t| t,
-            .count => null,
-        };
-    }
 
-    inline fn getHanlderComptime(comptime self: Field) ?fn (context.Context, []const u8) anyerror!?self.getTokenType() {
-        return comptime self.getHandler(self.getTokenType());
-    }
-    inline fn getChoiceComptime(comptime self: Field) ?[]const self.getTokenType() {
-        return comptime self.getChoice(self.getTokenType());
-    }
-
-    fn getHandler(self: Field, comptime t: type) ?fn (context.Context, []const u8) anyerror!?t {
-        return if (self.handler) |handler| util.fromOpaquePtr(fn (context.Context, []const u8) anyerror!?t, handler);
-    }
-    fn getChoice(self: Field, comptime t: type) ?[]const t {
-        return if (self.choice) |choice| util.fromOpaquePtr([]const t, choice) else null;
-    }
-
-    fn getDefault(comptime self: Field) self.getFieldType() {
-        return switch (self.field_type) {
-            .scalar => |t| if (t.@"1") |d| util.fromOpaquePtr(t.@"0", d) else undefined,
-            .variadic, .count => unreachable,
-        };
-    }
-
+    /// returns a capture group that can be used at runtime to
+    /// capture string tokens (or values) in accordance to what
+    /// this `Field` object expects
     fn getFieldCaptureGroup(self: Field) FieldCaptureGroup {
         return switch (self) {
             .scalar => .{ .scalar = null },
@@ -630,22 +601,31 @@ const Field = union(enum) {
         };
     }
 
+    /// construct the field using string tokens or raw values captured during runtime
     fn build(comptime self: Field, ctx: context.Context, capture_group: FieldCaptureGroup) !BuildResult(self.getFieldType()) {
         switch (self) {
             .scalar => |info| {
+                // for scalar values, we may not have anything captured e.g. options
+                // if nothing captured, return our default value
+                // else attempt to parse our token or return an error
                 if (capture_group.scalar) |capture| return .{ .result = try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_choice_t(info.t), info.choice), util.fromOpaquePtrMaybe(arg_handler_t(info.t), info.hander)) orelse return .{ .err = capture.invalidArgument() } };
                 return .{ .result = util.fromOpaquePtrMaybe(info.t, info.default) orelse undefined };
             },
             .variadic => |info| {
+                // our return type should be a slice. This is achieved by construct a list in our target type, then generating an owned slice
+                // we iterate over each captured token/value and convert it to the expected type, or returning an error
                 var values: std.ArrayList(info.t) = .empty;
                 defer values.deinit(ctx.gpa);
                 for (capture_group.variadic.items) |capture| try values.append(capture.as(ctx.gpa, try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_choice_t(info.t), info.choice), util.fromOpaquePtrMaybe(arg_handler_t(info.t), info.handler)) orelse return .{ .err = capture.invalidArgument() }));
                 return .{ .result = values.toOwnedSlice(ctx.arena.allocator()) };
             },
+            // or just count how many uses we found
             .count => return .{ .result = capture_group.count.items.len },
         }
     }
 
+    /// custom return type to support returning our custom error type
+    /// alongside our successful return type
     fn BuildResult(comptime t: type) type {
         return union(enum) {
             result: t,
@@ -653,6 +633,8 @@ const Field = union(enum) {
         };
     }
 
+    /// provides a simple `accept()` interface to track runtime CLI inputs without
+    /// leaking too much information about the field into the parsing logic
     const FieldCaptureGroup = union(enum) {
         scalar: ?Capture,
         variadic: std.ArrayList(Capture),
@@ -670,6 +652,10 @@ const Field = union(enum) {
             for (slice) |capture| capture.deinit(allocator);
         }
 
+        /// given a token and token source, handle it according to the field's type
+        /// - scalar: we hold onto the latest value we are given
+        /// - variadic: we hold onto every value we are given
+        /// - count: we only track the source
         fn accept(self: *FieldCaptureGroup, allocator: std.mem.Allocator, source: anytype, capture: ?Capture.Inner) !void {
             const src: CommandLineSource = .init(source);
             switch (self) {
@@ -679,10 +665,15 @@ const Field = union(enum) {
             }
         }
 
+        /// stores a token or value with the associated source
+        /// i.e. CLI option or argument supplying the data
+        /// (this is used for helpful error generation on parsing failures)
         const Capture = struct {
             inner: Inner,
             source: CommandLineSource,
 
+            /// allows us to store either a string token
+            /// or type-erased value
             const Inner = union(enum) {
                 token: []const u8,
                 value: any_t,
@@ -696,6 +687,8 @@ const Field = union(enum) {
                 }
             };
 
+            /// allows us to yield the expected type without needing to know how the value is sourced
+            /// i.e. from a parsed token or a direct type-erased pointer
             fn as(self: Capture, comptime t: type, ctx: context.Context, choice: ?arg_choice_t(t), handler: ?arg_handler_t(t)) !?t {
                 return switch (self.inner) {
                     .token => |token| try parseToken(t, ctx, token, choice, handler),
@@ -703,6 +696,7 @@ const Field = union(enum) {
                 };
             }
 
+            /// constructs the appropriate error type based on the capture's source
             fn invalidArgument(self: Capture) ParserError {
                 return switch (self.source) {
                     .long_flag => |flag| .{ .InvalidShortOptionArgument = .{ self.token, flag } },
@@ -712,6 +706,10 @@ const Field = union(enum) {
                 };
             }
         };
+
+        /// allows us to store the runtime-detected source of a value
+        /// so we can generate helpful error message i.e. which option did we hit parsing failure
+        /// when we parse values in our inlined section later
         const CommandLineSource = union(enum) {
             long_flag: []const u8,
             short_flag: u8,
@@ -741,14 +739,33 @@ pub const Parser = struct {
     short_flags: *const [62]?FlagPtr = &@splat(null),
     arguments: []const ArgPtr = &.{},
 
+    /// whether the parser should consume all remaining tokens
+    /// or stop after the last positional argument satisfied
+    /// needed for commands vs groups
+    /// (latter which forwards remaining CLI args to the subcommand)
     exhaustive: bool = true,
 
-    inline fn initExhaustive() Parser {
-        return .{ .exhaustive = true };
+    // Internal Representations
+    // Structures used to enable the desired functionality & interface for our parser
+    // not intended for external use.
+    //
+    // see `Parser` and `Parser.parse(...)` for more information
+
+    const FlagPtr = struct {
+        field_idx: usize,
+        value: ?any_t,
+    };
+    const ArgPtr = struct {
+        field_idx: usize,
+        kind: ArgumentKind,
+    };
+
+    pub inline fn initExhaustive() Parser {
+        comptime return .{ .exhaustive = true };
     }
 
-    inline fn initNonExhaustive() Parser {
-        return .{ .exhaustive = false };
+    pub inline fn initNonExhaustive() Parser {
+        comptime return .{ .exhaustive = false };
     }
 
     pub inline fn n(self: Parser) usize {
@@ -769,6 +786,8 @@ pub const Parser = struct {
         }
     }
 
+    /// for adding non-argumentative options to the parser
+    /// currently only supports boolean or count types
     pub inline fn addFlag(comptime self: Parser, comptime cfg: FlagConfig) Parser {
         comptime {
             const idx = self.n();
@@ -818,6 +837,8 @@ pub const Parser = struct {
         }
     }
 
+    /// for adding options with required arguments
+    /// see `OptionConfig` for more information
     pub inline fn addOption(comptime self: Parser, comptime op_t: type, comptime cfg: OptionConfig(op_t)) Parser {
         comptime {
             const idx = self.n();
@@ -868,6 +889,8 @@ pub const Parser = struct {
         }
     }
 
+    /// for adding positional arguments
+    /// see `ArgumentConfig` for more info
     pub inline fn addArgument(comptime self: Parser, comptime arg_t: type, comptime cfg: ArgumentConfig(arg_t)) Parser {
         comptime {
             const idx = self.n();
@@ -937,15 +960,15 @@ pub const Parser = struct {
                     switch (self.fields[ptr.field_idx]) {
                         .count => {
                             if (maybe_value) |token_value| return .{ .err = .{ .UnexpectedLongOptionArgument = .{ token_value, flag_name } } };
-                            try capture_groups[ptr.field_idx].acceptCount(ctx.gpa, src);
+                            try capture_groups[ptr.field_idx].accept(ctx.gpa, src, null);
                         },
                         .scalar, .variadic => {
                             if (ptr.value) |value| {
                                 if (maybe_value) |token_value| return .{ .err = .{ .UnexpectedLongOptionArgument = .{ token_value, flag_name } } };
-                                try capture_groups[ptr.field_idx].acceptValue(ctx.gpa, src, value);
+                                try capture_groups[ptr.field_idx].accept(ctx.gpa, src, .initValue(value));
                             } else {
                                 const value = maybe_value orelse return .{ .err = .{ .MissingLongOptionArgument = flag_name } };
-                                try capture_groups[ptr.field_idx].acceptToken(ctx.gpa, src, value);
+                                try capture_groups[ptr.field_idx].accept(ctx.gpa, src, .initToken(value));
                             }
                         },
                     }
@@ -959,13 +982,13 @@ pub const Parser = struct {
                     if (charToIdx(c)) |idx| {
                         if (self.short_flags[idx]) |ptr| {
                             switch (self.fields[ptr.field_idx]) {
-                                .count => try capture_groups[ptr.field_idx].acceptCount(ctx.gpa, src),
+                                .count => try capture_groups[ptr.field_idx].accept(ctx.gpa, src, null),
                                 .scalar, .variadic => {
                                     if (ptr.value) |value| {
-                                        try capture_groups[ptr.field_idx].acceptValue(ctx.gpa, src, value);
+                                        try capture_groups[ptr.field_idx].accept(ctx.gpa, src, .initValue(value));
                                     } else {
                                         const value = if (token.len - i > 1) token[i + 1 ..] else itr.next() orelse return .{ .err = .{ .MissingShortOptionArgument = c } };
-                                        try capture_groups[ptr.field_idx].acceptToken(ctx.gpa, src, value);
+                                        try capture_groups[ptr.field_idx].accept(ctx.gpa, src, .initToken(value));
                                         break;
                                     }
                                 },
@@ -981,7 +1004,7 @@ pub const Parser = struct {
                 const value = token;
                 const ptr = self.arguments[arg_idx];
                 const src: Field.FieldCaptureGroup.CommandLineSource = if (ptr.kind == .Command) .initCommand() else .init(arg_idx);
-                try capture_groups[ptr.field_idx].acceptToken(ctx.gpa, src, value);
+                try capture_groups[ptr.field_idx].accept(ctx.gpa, src, .initToken(value));
                 if (!self.exhaust and arg_idx == self.arguments.len) break;
             }
         }
@@ -1044,14 +1067,14 @@ test "arg_parser_datatypes" {
     defer itr.deinit(allocator);
 
     // bool, optional, string, int, float
-    const parser = ExhaustiveParser()
+    const parser = Parser.initExhaustive()
         .addArgument(bool)
         .addArgument(?bool)
         .addArgument([]const u8)
         .addArgument(u8)
         .addArgument(f16);
 
-    const expected: parser.outputType() = .{ true, false, "hello world", 123, 3.14 };
+    const expected: parser.t() = .{ true, false, "hello world", 123, 3.14 };
     try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).result);
 }
 
@@ -1062,16 +1085,16 @@ test "arg_parser_ignore_token" {
     defer itr.deinit(allocator);
 
     // bool, optional, string, int, float
-    const parser = ExhaustiveParser().addArgument([]const u8);
+    const parser = Parser.initExhaustive().addArgument([]const u8);
 
-    const expected: parser.outputType() = .{"hello world"};
+    const expected: parser.t() = .{"hello world"};
     try std.testing.expectEqualDeep(expected, parser.parse(itr.asTokenizer()).result);
 }
 
 test "arg_parser_help_flag" {
     const allocator = std.testing.allocator;
 
-    const parser = ExhaustiveParser().addOption("--long-flag", []const u8, "default");
+    const parser = Parser.initExhaustive().addOption("--long-flag", []const u8, "default");
 
     // test separate & conjoined value cases
     // boolean long flags tested in different case
@@ -1086,7 +1109,7 @@ test "arg_parser_help_flag" {
 test "arg_parser_option_arg" {
     const allocator = std.testing.allocator;
 
-    const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
+    const parser = Parser.initExhaustive().addOption("--long-flag,-l", []const u8, "default");
 
     // test separate & conjoined value cases
     // boolean long flags tested in different case
@@ -1098,7 +1121,7 @@ test "arg_parser_option_arg" {
     defer itr3.deinit(allocator);
     var itr4 = try tokenizer.StringIterator.init(allocator, "-lvalue");
     defer itr4.deinit(allocator);
-    const expected: parser.outputType() = .{"value"};
+    const expected: parser.t() = .{"value"};
     try std.testing.expectEqualDeep(expected, parser.parse(itr1.asTokenizer()).result);
     try std.testing.expectEqualDeep(expected, parser.parse(itr2.asTokenizer()).result);
     try std.testing.expectEqualDeep(expected, parser.parse(itr3.asTokenizer()).result);
@@ -1108,7 +1131,7 @@ test "arg_parser_option_arg" {
 test "arg_parser_multi_short_flag" {
     const allocator = std.testing.allocator;
 
-    const parser = ExhaustiveParser().addFlag("-y").addOption("-t", []const u8, "default");
+    const parser = Parser.initExhaustive().addFlag("-y").addOption("-t", []const u8, "default");
 
     // test different combinations of multiple short flags
     // - separate flags
@@ -1120,7 +1143,7 @@ test "arg_parser_multi_short_flag" {
     defer itr2.deinit(allocator);
     var itr3 = try tokenizer.StringIterator.init(allocator, "-ytvalue");
     defer itr3.deinit(allocator);
-    const expected1: parser.outputType() = .{ true, "value" };
+    const expected1: parser.t() = .{ true, "value" };
     try std.testing.expectEqualDeep(expected1, parser.parse(itr1.asTokenizer()).result);
     try std.testing.expectEqualDeep(expected1, parser.parse(itr2.asTokenizer()).result);
     try std.testing.expectEqualDeep(expected1, parser.parse(itr3.asTokenizer()).result);
@@ -1128,14 +1151,14 @@ test "arg_parser_multi_short_flag" {
     // - moving t after y should make it part of `-y` value
     var itr4 = try tokenizer.StringIterator.init(allocator, "-tyvalue");
     defer itr4.deinit(allocator);
-    const expected2: parser.outputType() = .{ false, "yvalue" };
+    const expected2: parser.t() = .{ false, "yvalue" };
     try std.testing.expectEqualDeep(expected2, parser.parse(itr4.asTokenizer()).result);
 }
 
 test "arg_parser_bool_flag" {
     const allocator = std.testing.allocator;
 
-    const parser = ExhaustiveParser().addFlag("--yes/--no,-y/-n");
+    const parser = Parser.initExhaustive().addFlag("--yes/--no,-y/-n");
 
     // check that both positive and negative flags work for short & long flags
     var itr1 = try tokenizer.StringIterator.init(allocator, "--yes");
@@ -1156,18 +1179,18 @@ test "arg_parser_bool_flag" {
 test "arg_parser_no_exhaust" {
     const allocator = std.testing.allocator;
 
-    const parser = NonExhaustiveParser().addFlag("-y").addArgument([]const u8);
+    const parser = Parser.initNonExhaustive().addFlag("-y").addArgument([]const u8);
 
     // even when exhast is off, we expect the option to populate because it appears before the argument
     var itr1 = try tokenizer.StringIterator.init(allocator, "\"hello world\" -y");
     defer itr1.deinit(allocator);
-    const expected1: parser.outputType() = .{ false, "hello world" };
+    const expected1: parser.t() = .{ false, "hello world" };
     try std.testing.expectEqualDeep(expected1, parser.parse(itr1.asTokenizer()).result);
 
     // in this case, option is ignored because arguments are populated before it
     var itr2 = try tokenizer.StringIterator.init(allocator, "-y \"hello world\"");
     defer itr2.deinit(allocator);
-    const expected2: parser.outputType() = .{ true, "hello world" };
+    const expected2: parser.t() = .{ true, "hello world" };
     try std.testing.expectEqualDeep(expected2, parser.parse(itr2.asTokenizer()).result);
 }
 
@@ -1194,7 +1217,7 @@ test "arg_parser_missing_pos_arg" {
 
     const expected: ParserError = .{ .MissingPositionalArgument = .{ 2, "TEXT" } };
 
-    const parser = ExhaustiveParser()
+    const parser = Parser.initExhaustive()
         .addArgument([]const u8)
         .addArgument([]const u8)
         .addArgument([]const u8)
@@ -1210,7 +1233,7 @@ test "arg_parser_unexpected_pos_arg" {
 
     const expected: ParserError = .{ .UnexpectedPositionalArgument = "baz" };
 
-    const parser = ExhaustiveParser()
+    const parser = Parser.initExhaustive()
         .addArgument([]const u8)
         .addArgument([]const u8)
         .addFlag("--hello");
@@ -1221,7 +1244,7 @@ test "arg_parser_unexpected_pos_arg" {
 test "arg_parser_unrecognized_long_flag" {
     const allocator = std.testing.allocator;
 
-    const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
+    const parser = Parser.initExhaustive().addOption("--long-flag,-l", []const u8, "default");
 
     var itr1 = try tokenizer.StringIterator.init(allocator, "--unknown-flag value");
     defer itr1.deinit(allocator);
@@ -1239,7 +1262,7 @@ test "arg_parser_missing_long_flag_arg" {
 
     const expected: ParserError = .{ .MissingLongOptionArgument = .{ "--long-flag", "TEXT" } };
 
-    const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
+    const parser = Parser.initExhaustive().addOption("--long-flag,-l", []const u8, "default");
 
     var itr = try tokenizer.StringIterator.init(allocator, "--long-flag");
     defer itr.deinit(allocator);
@@ -1252,7 +1275,7 @@ test "arg_parser_unexpected_long_flag_arg" {
 
     const expected: ParserError = .{ .UnexpectedLongOptionArgument = .{ "value", "--long-flag" } };
 
-    const parser = ExhaustiveParser().addFlag("--long-flag,-l");
+    const parser = Parser.initExhaustive().addFlag("--long-flag,-l");
 
     var itr = try tokenizer.StringIterator.init(allocator, "--long-flag=value");
     defer itr.deinit(allocator);
@@ -1263,7 +1286,7 @@ test "arg_parser_unexpected_long_flag_arg" {
 test "arg_parser_invalid_short_flag" {
     const allocator = std.testing.allocator;
 
-    const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
+    const parser = Parser.initExhaustive().addOption("--long-flag,-l", []const u8, "default");
 
     // test for separate and joined values
     var itr1 = try tokenizer.StringIterator.init(allocator, "-@ value");
@@ -1279,7 +1302,7 @@ test "arg_parser_invalid_short_flag" {
 test "arg_parser_unrecognized_short_flag" {
     const allocator = std.testing.allocator;
 
-    const parser = ExhaustiveParser().addFlag("-t/-f");
+    const parser = Parser.initExhaustive().addFlag("-t/-f");
 
     // test for separate and joined values
     var itr1 = try tokenizer.StringIterator.init(allocator, "-y value");
@@ -1299,7 +1322,7 @@ test "arg_parser_unrecognized_short_flag" {
 test "arg_parser_missing_short_flag_arg" {
     const allocator = std.testing.allocator;
 
-    const parser = ExhaustiveParser().addOption("--long-flag,-l", []const u8, "default");
+    const parser = Parser.initExhaustive().addOption("--long-flag,-l", []const u8, "default");
 
     var itr = try tokenizer.StringIterator.init(allocator, "-l");
     defer itr.deinit(allocator);
@@ -1322,14 +1345,14 @@ test "arg_parser_invalid_pos_arg_value" {
     defer invalid_float_itr.deinit(allocator);
 
     const cases = .{
-        .{ &invalid_bool_itr, ParserError{ .InvalidPositionalArgument = .{ "tru3", 0, "BOOL" } } },
-        .{ &invalid_opt_itr, ParserError{ .InvalidPositionalArgument = .{ "fals3", 1, "BOOL" } } },
-        .{ &invalid_int_itr, ParserError{ .InvalidPositionalArgument = .{ "123o", 2, "INT" } } },
-        .{ &invalid_float_itr, ParserError{ .InvalidPositionalArgument = .{ "3.1.4", 3, "FLOAT" } } },
+        .{ &invalid_bool_itr, ParserError{ .InvalidPositionalArgument = .{ "tru3", 0 } } },
+        .{ &invalid_opt_itr, ParserError{ .InvalidPositionalArgument = .{ "fals3", 1 } } },
+        .{ &invalid_int_itr, ParserError{ .InvalidPositionalArgument = .{ "123o", 2 } } },
+        .{ &invalid_float_itr, ParserError{ .InvalidPositionalArgument = .{ "3.1.4", 3 } } },
     };
 
     // bool, optional, string, int, float
-    const parser = ExhaustiveParser()
+    const parser = Parser.initExhaustive()
         .addArgument(bool)
         .addArgument(?bool)
         .addArgument(u8)
@@ -1352,13 +1375,13 @@ test "arg_parser_invalid_long_opt_arg_value" {
     defer invalid_float_itr.deinit(allocator);
 
     const cases = .{
-        .{ &invalid_opt_itr, ParserError{ .InvalidLongOptionArgument = .{ "123o", "--opt1", "INT" } } },
-        .{ &invalid_int_itr, ParserError{ .InvalidLongOptionArgument = .{ "123o", "--opt2", "INT" } } },
-        .{ &invalid_float_itr, ParserError{ .InvalidLongOptionArgument = .{ "3.1.4", "--opt3", "FLOAT" } } },
+        .{ &invalid_opt_itr, ParserError{ .InvalidLongOptionArgument = .{ "123o", "--opt1" } } },
+        .{ &invalid_int_itr, ParserError{ .InvalidLongOptionArgument = .{ "123o", "--opt2" } } },
+        .{ &invalid_float_itr, ParserError{ .InvalidLongOptionArgument = .{ "3.1.4", "--opt3" } } },
     };
 
     // bool, optional, string, int, float
-    const parser = ExhaustiveParser()
+    const parser = Parser.initExhaustive()
         .addOption("--opt1,-1", ?u8, null)
         .addOption("--opt2,-2", u8, 0)
         .addOption("--opt3,-3", f16, 1.0);
@@ -1380,13 +1403,13 @@ test "arg_parser_invalid_short_opt_arg_value" {
     defer invalid_float_itr.deinit(allocator);
 
     const cases = .{
-        .{ &invalid_opt_itr, ParserError{ .InvalidShortOptionArgument = .{ "123o", '1', "INT" } } },
-        .{ &invalid_int_itr, ParserError{ .InvalidShortOptionArgument = .{ "123o", '2', "INT" } } },
-        .{ &invalid_float_itr, ParserError{ .InvalidShortOptionArgument = .{ "3.1.4", '3', "FLOAT" } } },
+        .{ &invalid_opt_itr, ParserError{ .InvalidShortOptionArgument = .{ "123o", '1' } } },
+        .{ &invalid_int_itr, ParserError{ .InvalidShortOptionArgument = .{ "123o", '2' } } },
+        .{ &invalid_float_itr, ParserError{ .InvalidShortOptionArgument = .{ "3.1.4", '3' } } },
     };
 
     // bool, optional, string, int, float
-    const parser = ExhaustiveParser()
+    const parser = Parser.initExhaustive()
         .addOption("--opt1,-1", ?u8, null)
         .addOption("--opt2,-2", u8, 0)
         .addOption("--opt3,-3", f16, 1.0);
