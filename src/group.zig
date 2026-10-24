@@ -10,6 +10,7 @@ const util = @import("util.zig");
 const context = @import("context.zig");
 const tokenizer = @import("tokenizer.zig");
 const fmt = @import("fmt.zig");
+const types = @import("types.zig");
 
 pub const CommandOrGroup = union(enum) {
     command: *const cmd.CommandStruct,
@@ -99,12 +100,12 @@ pub const GroupStruct = struct {
         }
     }
 
-    pub inline fn option(comptime self: Self, comptime op_t: type, comptime help: []const u8, comptime cfg: parser.OptionConfig(op_t)) Self {
+    pub inline fn option(comptime self: Self, comptime op_t: anytype, comptime help: []const u8, comptime cfg: parser.OptionConfig(types.CliType.init(op_t).asRawType())) Self {
         comptime {
             if (self.handler_fn) |_| @compileError("please add options before registering the handler function");
             var result = self;
             result.parser = self.parser.addOption(op_t, cfg);
-            result.opt_help = self.opt_help ++ fmt.optionHelpText(cfg.long, cfg.short, op_t, help) ++ "\n";
+            result.opt_help = self.opt_help ++ fmt.optionHelpText(cfg.long, cfg.short, .init(op_t), help) ++ "\n";
             return result;
         }
     }
@@ -131,7 +132,7 @@ pub const GroupStruct = struct {
     pub fn invoke(comptime self: GroupStruct, ctx: context.Context, itr: tokenizer.Tokenizer) !void {
         if (self.commands.len == 0) @compileError("attempting to invoke command group '" ++ self.name ++ "' without any subcommands registered");
         var chosen_cmd: [self.commands.len]bool = @splat(false);
-        const prsr = self.parser.addArgument([]const u8, .{});
+        const prsr = self.parser.addArgument(types.Type.COMMAND, .{});
         switch (try prsr.parse(ctx, itr)) {
             .result => |result| {
                 const cmd_name: []const u8 = @field(result, @typeInfo(@TypeOf(result)).@"struct".field_names[self.parser.n()]);

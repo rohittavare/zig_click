@@ -40,12 +40,12 @@ pub const CommandStruct = struct {
         return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, self.handler_t(), null);
     }
 
-    pub inline fn option(comptime self: Self, comptime op_t: type, comptime help: []const u8, comptime cfg: parser.OptionConfig(op_t)) Self {
+    pub inline fn option(comptime self: Self, comptime op_t: anytype, comptime help: []const u8, comptime cfg: parser.OptionConfig(types.CliType.init(op_t).asRawType())) Self {
         comptime {
             if (self.handler_fn) |_| @compileError("please add options before registering the handler function");
             var result = self;
             result.parser = self.parser.addOption(op_t, cfg);
-            result.opt_help = self.opt_help ++ fmt.optionHelpText(cfg.long, cfg.short, op_t, help) ++ "\n";
+            result.opt_help = self.opt_help ++ fmt.optionHelpText(cfg.long, cfg.short, .init(op_t), help) ++ "\n";
             return result;
         }
     }
@@ -60,14 +60,14 @@ pub const CommandStruct = struct {
         }
     }
 
-    pub inline fn argument(comptime self: Self, comptime arg_t: type, comptime help: []const u8, comptime cfg: parser.ArgumentConfig(arg_t)) Self {
+    pub inline fn argument(comptime self: Self, comptime arg_t: anytype, comptime help: []const u8, comptime cfg: parser.ArgumentConfig(types.CliType.init(arg_t).asRawType())) Self {
         comptime {
             if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
             var result = self;
             result.parser = self.parser.addArgument(arg_t, cfg);
             result.arg_help = switch (cfg.kind) {
-                .Positional => self.arg_help ++ fmt.argumentHelpText(self.parser.arguments.len, arg_t, help) ++ "\n",
-                .Variadic => self.arg_help ++ fmt.argumentHelpText(null, arg_t, help) ++ "\n",
+                .Positional => self.arg_help ++ fmt.argumentHelpText(self.parser.arguments.len, .init(arg_t), help) ++ "\n",
+                .Variadic => self.arg_help ++ fmt.argumentHelpText(null, .init(arg_t), help) ++ "\n",
                 else => self.arg_help,
             };
             return result;

@@ -128,9 +128,9 @@ test "append_column_long_line" {
     try std.testing.expectEqualStrings(expected, appendColumn(line, column, 10));
 }
 
-pub inline fn argumentHelpText(comptime idx: ?usize, comptime t: type, comptime description: []const u8) []const u8 {
+pub inline fn argumentHelpText(comptime idx: ?usize, comptime t: types.CliType, comptime description: []const u8) []const u8 {
     return appendColumn(
-        if (idx) |i| std.fmt.comptimePrint("{d: >3}: {s: <25}", .{ i, types.type_to_name(t) }) else std.fmt.comptimePrint("  *: {s: <25}", .{types.type_to_name(t)}),
+        if (idx) |i| std.fmt.comptimePrint("{d: >3}: {s: <25}", .{ i, t.hint() }) else std.fmt.comptimePrint("  *: {s: <25}", .{t.hint()}),
         columnizeComptime(description, DESCRIPTION_WIDTH, DESCRIPTION_INDENT),
         DESCRIPTION_COLUMN_IDX,
     );
@@ -141,7 +141,7 @@ test "argument_help_text" {
         \\  0: TEXT                     this is a test description for a test argument so 
         \\                                I can validate the argument help text. 
     ;
-    const actual = argumentHelpText(0, []const u8, "this is a test description for a test argument so I can validate the argument help text.");
+    const actual = argumentHelpText(0, .init([]const u8), "this is a test description for a test argument so I can validate the argument help text.");
     try std.testing.expectEqualStrings(expected, actual);
 }
 
@@ -150,7 +150,7 @@ test "argument_help_text_variadic" {
         \\  *: TEXT                     this is a test description for a test argument so 
         \\                                I can validate the argument help text. 
     ;
-    const actual = argumentHelpText(null, []const u8, "this is a test description for a test argument so I can validate the argument help text.");
+    const actual = argumentHelpText(null, .init([]const u8), "this is a test description for a test argument so I can validate the argument help text.");
     try std.testing.expectEqualStrings(expected, actual);
 }
 
@@ -228,20 +228,20 @@ test "flag_help_text" {
 pub inline fn optionHelpText(
     comptime long: ?[]const u8,
     comptime short: ?[]const u8,
-    comptime t: type,
+    comptime t: types.CliType,
     comptime description: []const u8,
 ) []const u8 {
     comptime {
         const line = fmt_line: {
             if (short) |s| {
                 if (long) |l| {
-                    break :fmt_line std.fmt.comptimePrint("  {s},    {s}={s}", .{ s, l, types.type_to_name(t) });
+                    break :fmt_line std.fmt.comptimePrint("  {s},    {s}={s}", .{ s, l, t.hint() });
                 } else {
-                    break :fmt_line std.fmt.comptimePrint("  {s} {s}", .{ s, types.type_to_name(t) });
+                    break :fmt_line std.fmt.comptimePrint("  {s} {s}", .{ s, t.hint() });
                 }
             } else {
                 if (long) |l| {
-                    break :fmt_line std.fmt.comptimePrint("         {s}={s}", .{ l, types.type_to_name(t) });
+                    break :fmt_line std.fmt.comptimePrint("         {s}={s}", .{ l, t.hint() });
                 }
                 unreachable;
             }
@@ -280,7 +280,7 @@ test "option_help_text" {
     };
     inline for (cases) |case| {
         const long, const short, const t, const desc, const expected = case;
-        try std.testing.expectEqualStrings(expected, optionHelpText(long, short, t, desc));
+        try std.testing.expectEqualStrings(expected, optionHelpText(long, short, .init(t), desc));
     }
 }
 

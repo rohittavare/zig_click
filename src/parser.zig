@@ -196,29 +196,11 @@ test "parse_short_flag_decl" {
 
 // ========== end command and flag name validations ==========
 
-/// parse a token to the desired data type
-/// only int, float, bool and string types supported natively
-/// otherwise a custom handler is required to parse the data type
-/// does not parse null values for optional types
-/// returns null when the datatype is unsupported or failure during parsing
-fn parseTokenNative(comptime t: type, token: []const u8) ?t {
-    return switch (@typeInfo(t)) {
-        .optional => |o| parseTokenNative(o.child, token) orelse null,
-        .int => std.fmt.parseInt(t, token, 10) catch null,
-        .float => std.fmt.parseFloat(t, token) catch null,
-        .bool => if (std.mem.eql(u8, token, "true")) true else if (std.mem.eql(u8, token, "false")) false else null,
-        // currently only support strings through slice of const u8
-        .pointer => |p| if (p.size == .slice and p.attrs.@"const" and p.child == u8) token else null,
-        .@"enum" => std.meta.stringToEnum(t, token),
-        else => null,
-    };
-}
-
 /// when parsing a token, users may specify a choice of legal values as well as a custom parsing function
 /// the parsing function may accept a context object to do any necessary memory allocations
-/// if no parsing function is provided, tokens will be parsed using `parseTokenNative` and unsupported types will automatically return null
-fn parseToken(comptime t: type, ctx: context.Context, token: []const u8, handler: ?arg_handler_t(t)) !?t {
-    return (if (handler) |h| try h(ctx, token) else parseTokenNative(t, token)) orelse return null;
+/// if no parsing function is provided, tokens will be parsed by the `CliType`'s built in parser and unsupported types will automatically return null
+fn parseToken(comptime t: types.CliType, ctx: context.Context, token: []const u8, handler: ?arg_handler_t(t.asRawType())) !?t.asRawType() {
+    return (if (handler) |h| try h(ctx, token) else t.parseToken(token)) orelse return null;
 }
 
 const testEnum = enum {
@@ -263,8 +245,9 @@ test "parse_token" {
     defer ctx.deinit();
 
     inline for (cases) |case| {
-        const t: type = case.@"0";
-        _, const token: []const u8, const handler: ?arg_handler_t(t), const expected: ?t = case;
+        const raw_t = case.@"0";
+        const t: types.CliType = .init(raw_t);
+        _, const token: []const u8, const handler: ?arg_handler_t(t.asRawType()), const expected: ?t.asRawType() = case;
         try std.testing.expectEqualDeep(expected, try parseToken(t, ctx.context(), token, handler));
     }
 }
@@ -522,7 +505,7 @@ const Field = union(enum) {
     fn initCount() Field {
         return .count;
     }
-    fn initScalar(comptime t: type, comptime default: ?t, comptime handler: ?arg_handler_t(t)) Field {
+    fn initScalar(comptime t: types.CliType, comptime default: ?t.asRawType(), comptime handler: ?arg_handler_t(t.asRawType())) Field {
         return .{
             .scalar = .{
                 .t = t,
@@ -531,7 +514,7 @@ const Field = union(enum) {
             },
         };
     }
-    fn initVariadic(comptime t: type, handler: ?arg_handler_t(t)) Field {
+    fn initVariadic(comptime t: types.CliType, handler: ?arg_handler_t(t.asRawType())) Field {
         return .{ .variadic = .{
             .t = t,
             .handler = if (handler) |h| util.toOpaquePtrComptime(h) else null,
@@ -539,14 +522,14 @@ const Field = union(enum) {
     }
 
     const ScalarFieldInfo = struct {
-        t: type,
+        t: types.CliType,
         // expect to be type `t`
         default: ?any_t = null,
         // expect to be type `*const fn(Context, []const u8) !?t`
         handler: ?any_t = null,
     };
     const VariadicFieldInfo = struct {
-        t: type,
+        t: types.CliType,
         // expect to be type `*const fn(Context, []const u8) !?t`
         handler: ?any_t = null,
     };
@@ -555,8 +538,8 @@ const Field = union(enum) {
     /// taking into account the field type (variadic, scalar, count)
     inline fn getFieldType(comptime self: Field) type {
         return switch (self) {
-            .scalar => |info| if (info.default) |_| info.t else ?info.t,
-            .variadic => |info| []const info.t,
+            .scalar => |info| if (info.default) |_| info.t.asRawType() else ?info.t.asRawType(),
+            .variadic => |info| []const info.t.asRawType(),
             .count => usize,
         };
     }
@@ -579,13 +562,13 @@ const Field = union(enum) {
                 // for scalar values, we may not have anything captured e.g. options
                 // if nothing captured, return our default value
                 // else attempt to parse our token or return an error
-                if (capture_group.scalar) |capture| return .{ .result = try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_handler_t(info.t), info.handler)) orelse return .{ .err = capture.invalidArgument() } };
+                if (capture_group.scalar) |capture| return .{ .result = try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_handler_t(info.t.asRawType()), info.handler)) orelse return .{ .err = capture.invalidArgument() } };
                 return .{
                     .result = comptime resolve_result: {
                         if (info.default) |opaque_default| {
-                            break :resolve_result util.fromOpaquePtr(info.t, opaque_default);
+                            break :resolve_result util.fromOpaquePtr(info.t.asRawType(), opaque_default);
                         } else {
-                            break :resolve_result @as(?info.t, null);
+                            break :resolve_result @as(?info.t.asRawType(), null);
                         }
                     },
                 };
@@ -593,9 +576,9 @@ const Field = union(enum) {
             .variadic => |info| {
                 // our return type should be a slice. This is achieved by construct a list in our target type, then generating an owned slice
                 // we iterate over each captured token/value and convert it to the expected type, or returning an error
-                var values: std.ArrayList(info.t) = .empty;
+                var values: std.ArrayList(info.t.asRawType()) = .empty;
                 defer values.deinit(ctx.arena.allocator());
-                for (capture_group.variadic.items) |capture| try values.append(ctx.arena.allocator(), try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_handler_t(info.t), info.handler)) orelse return .{ .err = capture.invalidArgument() });
+                for (capture_group.variadic.items) |capture| try values.append(ctx.arena.allocator(), try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_handler_t(info.t.asRawType()), info.handler)) orelse return .{ .err = capture.invalidArgument() });
                 return .{ .result = try values.toOwnedSlice(ctx.arena.allocator()) };
             },
             // or just count how many uses we found
@@ -668,10 +651,10 @@ const Field = union(enum) {
 
             /// allows us to yield the expected type without needing to know how the value is sourced
             /// i.e. from a parsed token or a direct type-erased pointer
-            fn as(self: Capture, comptime t: type, ctx: context.Context, handler: ?arg_handler_t(t)) !?t {
+            fn as(self: Capture, comptime t: types.CliType, ctx: context.Context, handler: ?arg_handler_t(t.asRawType())) !?t.asRawType() {
                 return switch (self.inner) {
                     .token => |token| try parseToken(t, ctx, token, handler),
-                    .value => |value| util.fromOpaquePtr(t, value),
+                    .value => |value| util.fromOpaquePtr(t.asRawType(), value),
                 };
             }
 
@@ -774,7 +757,7 @@ pub const Parser = struct {
             var result = self;
             switch (cfg.kind) {
                 .Boolean => {
-                    result.fields = util.extendSliceComptime(Field, result.fields, Field.initScalar(bool, false, null));
+                    result.fields = util.extendSliceComptime(Field, result.fields, Field.initScalar(.init(bool), false, null));
                     const pos_ptr: FlagPtr = .{ .field_idx = idx, .value = .{ .value = util.toOpaquePtrComptime(true) } };
                     const neg_ptr: FlagPtr = .{ .field_idx = idx, .value = .{ .value = util.toOpaquePtrComptime(false) } };
                     if (cfg.long) |decl| {
@@ -819,25 +802,26 @@ pub const Parser = struct {
 
     /// for adding options with required arguments
     /// see `OptionConfig` for more information
-    pub inline fn addOption(comptime self: Parser, comptime op_t: type, comptime cfg: OptionConfig(op_t)) Parser {
+    pub inline fn addOption(comptime self: Parser, comptime op_t: anytype, comptime cfg: OptionConfig(types.CliType.init(op_t).asRawType())) Parser {
         comptime {
+            const op_t_union: types.CliType = .init(op_t);
             const idx = self.n();
             var result = self;
             const field: Field = resolve_field: {
-                if (!types.is_supported_option_type(op_t) and cfg.handler == null) @compileError("option handler function is required for parsing non-native option type: " ++ @typeName(op_t));
+                if (!types.is_supported_native_option_type(op_t_union) and cfg.handler == null) @compileError("option handler function is required for parsing non-native option type: " ++ @typeName(op_t_union.asRawType()));
                 if (cfg.variadic) {
                     if (cfg.default) |_| @compileError("variadic options do not support default types");
-                    switch (@typeInfo(op_t)) {
+                    switch (@typeInfo(op_t_union.asRawType())) {
                         .optional => @compileError("variadic options do not support optional types"),
                         else => {},
                     }
-                    break :resolve_field .initVariadic(op_t, cfg.handler);
+                    break :resolve_field .initVariadic(op_t_union, cfg.handler);
                 } else {
-                    switch (@typeInfo(op_t)) {
+                    switch (@typeInfo(op_t_union.asRawType())) {
                         .optional => |o| @compileError("to use optional types, leave `cfg.default` unset and set the flag type to " ++ @typeName(o.child)),
                         else => {},
                     }
-                    break :resolve_field .initScalar(op_t, cfg.default, cfg.handler);
+                    break :resolve_field .initScalar(op_t_union, cfg.default, cfg.handler);
                 }
             };
             result.fields = util.extendSliceComptime(Field, result.fields, field);
@@ -861,33 +845,34 @@ pub const Parser = struct {
 
     /// for adding positional arguments
     /// see `ArgumentConfig` for more info
-    pub inline fn addArgument(comptime self: Parser, comptime arg_t: type, comptime cfg: ArgumentConfig(arg_t)) Parser {
+    pub inline fn addArgument(comptime self: Parser, comptime arg_t: anytype, comptime cfg: ArgumentConfig(types.CliType.init(arg_t).asRawType())) Parser {
         comptime {
+            const arg_t_union: types.CliType = .init(arg_t);
             const idx = self.n();
             var result = self;
             switch (cfg.kind) {
                 .Positional => {
-                    if (!types.is_supported_argument_type(arg_t) and cfg.handler == null) @compileError("argument handler function is required for parsing non-native option type: " ++ @typeName(arg_t));
+                    if (!types.is_supported_native_argument_type(arg_t_union) and cfg.handler == null) @compileError("argument handler function is required for parsing non-native option type: " ++ @typeName(arg_t.asRawType()));
                 },
                 .Command => {
-                    if (arg_t != []const u8) @compileError("'command' arguments expect type `[]const u8`; found: " ++ @typeName(arg_t));
+                    if (arg_t_union.asRawType() != []const u8) @compileError("'command' arguments expect type `[]const u8`; found: " ++ @typeName(arg_t_union.asRawType()));
                     if (cfg.handler) |_| @compileError("'command' arguments do not accept argument handlers");
                 },
                 .Variadic => {
-                    if (!types.is_supported_argument_type(arg_t) and cfg.handler == null) @compileError("argument handler function is required for parsing non-native option type: " ++ @typeName(arg_t));
-                    switch (@typeInfo(arg_t)) {
+                    if (!types.is_supported_native_argument_type(arg_t_union) and cfg.handler == null) @compileError("argument handler function is required for parsing non-native option type: " ++ @typeName(arg_t.asRawType()));
+                    switch (@typeInfo(arg_t_union.asRawType())) {
                         .optional => @compileError("variadic arguments do not support optional types"),
                         else => {},
                     }
                 },
                 .Passthrough => {
-                    if (arg_t != []const u8) @compileError("passthrough arguments expect type `[]const u8`; found: " ++ @typeName(arg_t));
+                    if (arg_t_union.asRawType() != []const u8) @compileError("passthrough arguments expect type `[]const u8`; found: " ++ @typeName(arg_t_union.asRawType()));
                     if (cfg.handler) |_| @compileError("passthrough arguments do not accept argument handlers");
                 },
             }
             const field: Field = switch (cfg.kind) {
-                .Positional, .Command => Field.initScalar(arg_t, @as(arg_t, undefined), cfg.handler),
-                .Variadic, .Passthrough => Field.initVariadic(arg_t, cfg.handler),
+                .Positional, .Command => Field.initScalar(arg_t_union, @as(arg_t_union.asRawType(), undefined), cfg.handler),
+                .Variadic, .Passthrough => Field.initVariadic(arg_t_union, cfg.handler),
             };
 
             result.fields = util.extendSliceComptime(Field, result.fields, field);
@@ -1324,6 +1309,38 @@ test "arg_parser_no_exhaust" {
     defer itr2.deinit(allocator);
     const expected2: parser.t() = .{ true, "hello world" };
     try std.testing.expectEqualDeep(expected2, (try parser.parse(ctx.context(), itr2.asTokenizer())).result);
+}
+
+test "arg_parser_enum_types" {
+    const allocator = std.testing.allocator;
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive().addOption(types.Type.SIZE, .{ .long = "--option" }).addArgument(types.Type.STRING, .{});
+
+    // even when exhast is off, we expect the option to populate because it appears before the argument
+    var itr = try tokenizer.StringIterator.init(allocator, "--option 10 \"hello world\"");
+    defer itr.deinit(allocator);
+
+    const expected: parser.t() = .{ 10, "hello world" };
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
+}
+
+test "arg_parser_hinted_types" {
+    const allocator = std.testing.allocator;
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive().addOption(types.hintedType(usize, "SIZE"), .{ .long = "--option" }).addArgument(types.hintedType([]const u8, "STRING"), .{});
+
+    // even when exhast is off, we expect the option to populate because it appears before the argument
+    var itr = try tokenizer.StringIterator.init(allocator, "--option 10 \"hello world\"");
+    defer itr.deinit(allocator);
+
+    const expected: parser.t() = .{ 10, "hello world" };
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
 }
 
 // error test cases:

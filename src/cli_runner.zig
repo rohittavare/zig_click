@@ -214,7 +214,7 @@ test "command_runner_env" {
 }
 
 const foo_cmd = command.Command("foo", "echos argument prepended with 'foo'")
-    .argument([]const u8, "contents to echo", .{})
+    .argument(types.Type.LINE, "contents to echo", .{})
     .handler(foo);
 fn foo(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("foo {s}", .{arg});
@@ -222,7 +222,7 @@ fn foo(ctx: context.Context, arg: []const u8) !void {
 }
 
 const bar_cmd = command.Command("bar", "echos argument prepended with 'bar'")
-    .argument([]const u8, "contents to echo", .{})
+    .argument(types.Type.LINE, "contents to echo", .{})
     .handler(bar);
 fn bar(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("bar {s}", .{arg});
@@ -230,7 +230,7 @@ fn bar(ctx: context.Context, arg: []const u8) !void {
 }
 
 const baz_cmd = command.Command("baz", "echos argument prepended with 'baz'")
-    .argument([]const u8, "contents to echo", .{})
+    .argument(types.Type.LINE, "contents to echo", .{})
     .handler(baz);
 fn baz(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("baz {s}", .{arg});
@@ -290,7 +290,7 @@ test "command_group_command_help_message" {
         \\  baz [ARG]...
         \\
         \\ARGUMENTS:
-        \\  0: TEXT                     contents to echo
+        \\  0: LINE                     contents to echo
         \\
         \\
     ;
@@ -306,7 +306,7 @@ test "command_group" {
 }
 
 const PrintsContextValue = command.Command("print-ctx", "prints the value help by specified keys in the shared CLI context")
-    .argument([]const u8, "the name of the key to lookup", .{})
+    .argument(types.hintedType([]const u8, "KEY"), "the name of the key to lookup", .{})
     .handler(printContext);
 
 fn printContext(ctx: context.Context, k: []const u8) !void {
@@ -319,7 +319,7 @@ fn printContext(ctx: context.Context, k: []const u8) !void {
 }
 
 const ContextCommandGroup = group.Group("ctx-group", "a command group which persists values to subcommands via the shared context")
-    .option([]const u8, "writes the provided value to key 'foo' in the context", .{ .long = "--foo" })
+    .option(types.hintedType([]const u8, "VALUE"), "writes the provided value to key 'foo' in the context", .{ .long = "--foo" })
     .subcommand(PrintsContextValue)
     .handler(setContext);
 
@@ -349,7 +349,7 @@ test "group_option_help" {
         \\                                shared CLI context 
         \\
         \\OPTIONS:
-        \\         --foo=TEXT           writes the provided value to key 'foo' in the 
+        \\         --foo=VALUE          writes the provided value to key 'foo' in the 
         \\                                context 
         \\
         \\
