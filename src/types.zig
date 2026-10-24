@@ -12,7 +12,6 @@ const std = @import("std");
 pub inline fn is_supported_option_type(comptime t: type) bool {
     return switch (@typeInfo(t)) {
         .int, .float, .@"enum" => true,
-        .optional => |o| is_supported_option_type(o.child),
         .pointer => |p| (p.size == .slice and p.attrs.@"const" and p.child == u8),
         else => false,
     };
@@ -23,7 +22,6 @@ pub inline fn is_supported_option_type(comptime t: type) bool {
 pub inline fn is_supported_argument_type(comptime t: type) bool {
     return switch (@typeInfo(t)) {
         .int, .float, .bool, .@"enum" => true,
-        .optional => |o| is_supported_argument_type(o.child),
         .pointer => |p| (p.size == .slice and p.attrs.@"const" and p.child == u8),
         else => false,
     };
@@ -39,17 +37,6 @@ test "string_slices_supported" {
         try std.testing.expect(!c([]u8));
         // other integer types not supported
         try std.testing.expect(!c([]const u16));
-    }
-}
-
-test "optional_types_supported" {
-    inline for (checkers) |c| {
-        try std.testing.expect(c(?f32));
-        try std.testing.expect(c(?i16));
-        try std.testing.expect(c(?[]const u8));
-
-        // example unsupported type
-        try std.testing.expect(!c(?[]u8));
     }
 }
 

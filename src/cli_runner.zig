@@ -106,11 +106,11 @@ const outputStream = enum {
 
 const echoTestCommand = command.Command("echo_test_command", "basic test command to print out data received by the handler")
     .option(outputStream, "which stream to output to", .{ .long = "--print-to", .default = outputStream.stdout })
-    .option(?[]const u8, "echo the contents of this flag's arguments", .{ .long = "--echo-me", .short = "-e" })
-    .argument([]const u8, "command line contents to echo", .{})
+    .option([]const u8, "echo the contents of this flag's arguments", .{ .long = "--echo-me", .short = "-e" })
+    .argument([]const u8, "command line contents to echo", .{ .kind = .Variadic })
     .handler(handler);
 
-fn handler(ctx: context.Context, print_to: outputStream, echo_opn: ?[]const u8, echo_arg: []const u8) !void {
+fn handler(ctx: context.Context, print_to: outputStream, echo_opn: ?[]const u8, echo_args: []const []const u8) !void {
     const writer = switch (print_to) {
         .stdout => ctx.stdout,
         .stderr => ctx.stderr,
@@ -129,7 +129,7 @@ fn handler(ctx: context.Context, print_to: outputStream, echo_opn: ?[]const u8, 
         try writer.print("{s}\n", .{txt});
     }
     // echo arg
-    if (echo_arg.len > 0) try writer.print("{s}\n", .{echo_arg});
+    for (echo_args) |echo_arg| if (echo_arg.len > 0) try writer.print("{s}\n", .{echo_arg});
     try writer.flush();
 }
 
@@ -141,7 +141,7 @@ test "command_help_message" {
         \\  echo_test_command [OPTION]... [ARG]...
         \\
         \\ARGUMENTS:
-        \\  0: TEXT                     command line contents to echo
+        \\  *: TEXT                     command line contents to echo
         \\
         \\OPTIONS:
         \\         --print-to=outputStream
@@ -181,9 +181,9 @@ test "command_runner_to_stderr" {
 test "command_runner_arg" {
     const runner = CliRunner.init(echoTestCommand);
     try runner.runTest(RunnerConfig{
-        .args = "\"this is an argument\"",
+        .args = "this is the argument",
     }, RunResult{
-        .stdout = "this is an argument\n",
+        .stdout = "this\nis\nthe\nargument\n",
     });
 }
 
@@ -319,7 +319,7 @@ fn printContext(ctx: context.Context, k: []const u8) !void {
 }
 
 const ContextCommandGroup = group.Group("ctx-group", "a command group which persists values to subcommands via the shared context")
-    .option(?[]const u8, "writes the provided value to key 'foo' in the context", .{ .long = "--foo" })
+    .option([]const u8, "writes the provided value to key 'foo' in the context", .{ .long = "--foo" })
     .subcommand(PrintsContextValue)
     .handler(setContext);
 
