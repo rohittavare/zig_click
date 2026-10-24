@@ -69,7 +69,7 @@ pub inline fn type_to_name(comptime t: type) []const u8 {
             const dot_idx = std.mem.findLast(u8, full_name, ".") orelse break :enum_name full_name;
             break :enum_name full_name[dot_idx + 1 ..];
         },
-        else => unreachable,
+        else => "TEXT",
     };
 }
 

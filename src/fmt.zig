@@ -128,9 +128,9 @@ test "append_column_long_line" {
     try std.testing.expectEqualStrings(expected, appendColumn(line, column, 10));
 }
 
-pub inline fn argumentHelpText(comptime idx: usize, comptime t: type, comptime description: []const u8) []const u8 {
+pub inline fn argumentHelpText(comptime idx: ?usize, comptime t: type, comptime description: []const u8) []const u8 {
     return appendColumn(
-        std.fmt.comptimePrint("{d: >3}: {s: <25}", .{ idx, types.type_to_name(t) }),
+        if (idx) |i| std.fmt.comptimePrint("{d: >3}: {s: <25}", .{ i, types.type_to_name(t) }) else std.fmt.comptimePrint("  *: {s: <25}", .{types.type_to_name(t)}),
         columnizeComptime(description, DESCRIPTION_WIDTH, DESCRIPTION_INDENT),
         DESCRIPTION_COLUMN_IDX,
     );
@@ -145,32 +145,23 @@ test "argument_help_text" {
     try std.testing.expectEqualStrings(expected, actual);
 }
 
+test "argument_help_text_variadic" {
+    const expected =
+        \\  *: TEXT                     this is a test description for a test argument so 
+        \\                                I can validate the argument help text. 
+    ;
+    const actual = argumentHelpText(null, []const u8, "this is a test description for a test argument so I can validate the argument help text.");
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
 pub inline fn flagHelpText(
-    comptime declaration: []const u8,
+    comptime long: ?[]const u8,
+    comptime short: ?[]const u8,
     comptime description: []const u8,
 ) []const u8 {
     comptime {
-        const flags = parser.parseBoolFlag(declaration) catch unreachable;
-        var short_flags: []const u8 = short_flag_str: {
-            if (flags.short_positive) |flag| {
-                if (flags.short_negative) |negative_flag| {
-                    break :short_flag_str std.fmt.comptimePrint("-{c}/-{c}", .{ flag, negative_flag });
-                } else {
-                    break :short_flag_str std.fmt.comptimePrint("-{c}", .{flag});
-                }
-            }
-            break :short_flag_str "";
-        };
-        const long_flags = long_flag_str: {
-            if (flags.long_positive) |flag| {
-                if (flags.long_negative) |negative_flag| {
-                    break :long_flag_str std.fmt.comptimePrint("--{s}/--{s}", .{ flag, negative_flag });
-                } else {
-                    break :long_flag_str std.fmt.comptimePrint("--{s}", .{flag});
-                }
-            }
-            break :long_flag_str "";
-        };
+        var short_flags: []const u8 = short orelse "";
+        const long_flags = long orelse "";
         if (short_flags.len > 0 and long_flags.len > 0) short_flags = short_flags ++ ",";
         const line = appendColumn("  " ++ short_flags, long_flags, LONG_FLAG_COLUMN_IDX);
         return appendColumn(line, columnizeComptime(description, DESCRIPTION_WIDTH, DESCRIPTION_INDENT), DESCRIPTION_COLUMN_IDX);
@@ -180,69 +171,77 @@ pub inline fn flagHelpText(
 test "flag_help_text" {
     const cases = .{
         .{
+            null,
             "-y",
             "some description",
             "  -y                          some description",
         },
         .{
+            null,
             "-y/-n",
             "some description",
             "  -y/-n                       some description",
         },
         .{
-            "-y/-n,--yes",
+            "--yes",
+            "-y/-n",
             "some description",
             "  -y/-n, --yes                some description",
         },
         .{
-            "-y/-n,--yes/--no",
+            "--yes/--no",
+            "-y/-n",
             "some description",
             "  -y/-n, --yes/--no           some description",
         },
         .{
-            "-y,--yes/--no",
+            "--yes/--no",
+            "-y",
             "some description",
             "  -y,    --yes/--no           some description",
         },
         .{
-            "-y,--yes",
+            "--yes",
+            "-y",
             "some description",
             "  -y,    --yes                some description",
         },
         .{
             "--yes/--no",
+            null,
             "some description",
             "         --yes/--no           some description",
         },
         .{
             "--yes",
+            null,
             "some description",
             "         --yes                some description",
         },
     };
     inline for (cases) |case| {
-        const decl, const desc, const expected = case;
-        try std.testing.expectEqualStrings(expected, flagHelpText(decl, desc));
+        const long, const short, const desc, const expected = case;
+        try std.testing.expectEqualStrings(expected, flagHelpText(long, short, desc));
     }
 }
 
 pub inline fn optionHelpText(
-    comptime declaration: []const u8,
+    comptime long: ?[]const u8,
+    comptime short: ?[]const u8,
     comptime t: type,
     comptime description: []const u8,
 ) []const u8 {
     comptime {
-        const flags = parser.parseOption(declaration) catch unreachable;
         const line = fmt_line: {
-            if (flags.short) |short| {
-                if (flags.long) |long| {
-                    break :fmt_line std.fmt.comptimePrint("  -{c},    --{s}={s}", .{ short, long, types.type_to_name(t) });
+            if (short) |s| {
+                if (long) |l| {
+                    break :fmt_line std.fmt.comptimePrint("  {s},    {s}={s}", .{ s, l, types.type_to_name(t) });
                 } else {
-                    break :fmt_line std.fmt.comptimePrint("  -{c} {s}", .{ short, types.type_to_name(t) });
+                    break :fmt_line std.fmt.comptimePrint("  {s} {s}", .{ s, types.type_to_name(t) });
                 }
             } else {
-                if (flags.long) |long| {
-                    break :fmt_line std.fmt.comptimePrint("         --{s}={s}", .{ long, types.type_to_name(t) });
+                if (long) |l| {
+                    break :fmt_line std.fmt.comptimePrint("         {s}={s}", .{ l, types.type_to_name(t) });
                 }
                 unreachable;
             }
@@ -259,17 +258,20 @@ test "option_help_text" {
     const cases = .{
         .{
             "--option",
+            null,
             usize,
             "some description",
             "         --option=SIZE        some description",
         },
         .{
-            "--option,-o",
+            "--option",
+            "-o",
             usize,
             "some description",
             "  -o,    --option=SIZE        some description",
         },
         .{
+            null,
             "-o",
             usize,
             "some description",
@@ -277,8 +279,8 @@ test "option_help_text" {
         },
     };
     inline for (cases) |case| {
-        const decl, const t, const desc, const expected = case;
-        try std.testing.expectEqualStrings(expected, optionHelpText(decl, t, desc));
+        const long, const short, const t, const desc, const expected = case;
+        try std.testing.expectEqualStrings(expected, optionHelpText(long, short, t, desc));
     }
 }
 

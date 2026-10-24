@@ -33,71 +33,66 @@ pub const CommandStruct = struct {
 
     // these comptime functions help us construct
     // more complex types based on the parser data shape
-    inline fn handlerT(comptime self: Self) type {
-        return @Fn([_]type{context.Context} ++ @typeInfo(self.parser.t).@"struct".field_types, &@as([self.parser.n() + 1]std.builtin.Type.Fn.ParamAttributes, @splat(std.builtin.Type.Fn.ParamAttributes{})), anyerror!void, std.builtin.Type.Fn.Attributes{});
+    inline fn handler_t(comptime self: Self) type {
+        return @Fn([_]type{context.Context} ++ @typeInfo(self.parser.t()).@"struct".field_types, &@as([self.parser.n() + 1]std.builtin.Type.Fn.ParamAttributes, @splat(std.builtin.Type.Fn.ParamAttributes{})), anyerror!void, std.builtin.Type.Fn.Attributes{});
     }
-    inline fn handlerPtrT(comptime self: Self) type {
-        return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, self.handlerT(), null);
-    }
-
-    pub inline fn option(comptime self: Self, comptime declaration: []const u8, comptime opT: type, comptime def: opT, comptime help: []const u8) Self {
-        if (self.handler_fn) |_| @compileError("please add options before registering the handler function");
-        return CommandStruct{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser.addOption(declaration, opT, def),
-            .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help ++ fmt.optionHelpText(declaration, opT, help) ++ "\n",
-            .arg_help = self.arg_help,
-        };
+    inline fn handler_ptr_t(comptime self: Self) type {
+        return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, self.handler_t(), null);
     }
 
-    pub inline fn flag(comptime self: Self, comptime declaration: []const u8, comptime help: []const u8) Self {
-        if (self.handler_fn) |_| @compileError("please add flags before registering the handler function");
-        return CommandStruct{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser.addFlag(declaration),
-            .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help ++ fmt.flagHelpText(declaration, help) ++ "\n",
-            .arg_help = self.arg_help,
-        };
+    pub inline fn option(comptime self: Self, comptime op_t: type, comptime help: []const u8, comptime cfg: parser.OptionConfig(op_t)) Self {
+        comptime {
+            if (self.handler_fn) |_| @compileError("please add options before registering the handler function");
+            var result = self;
+            result.parser = self.parser.addOption(op_t, cfg);
+            result.opt_help = self.opt_help ++ fmt.optionHelpText(cfg.long, cfg.short, op_t, help) ++ "\n";
+            return result;
+        }
     }
 
-    pub inline fn argument(comptime self: Self, comptime argT: type, comptime help: []const u8) Self {
-        if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
-        return CommandStruct{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser.addArgument(argT),
-            .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help,
-            .arg_help = self.arg_help ++ fmt.argumentHelpText(self.parser.arguments.len, argT, help) ++ "\n",
-        };
+    pub inline fn flag(comptime self: Self, comptime help: []const u8, comptime cfg: parser.FlagConfig) Self {
+        comptime {
+            if (self.handler_fn) |_| @compileError("please add flags before registering the handler function");
+            var result = self;
+            result.parser = self.parser.addFlag(cfg);
+            result.opt_help = self.opt_help ++ fmt.flagHelpText(cfg.long, cfg.short, help) ++ "\n";
+            return result;
+        }
+    }
+
+    pub inline fn argument(comptime self: Self, comptime arg_t: type, comptime help: []const u8, comptime cfg: parser.ArgumentConfig(arg_t)) Self {
+        comptime {
+            if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
+            var result = self;
+            result.parser = self.parser.addArgument(arg_t, cfg);
+            result.arg_help = switch (cfg.kind) {
+                .Positional => self.arg_help ++ fmt.argumentHelpText(self.parser.arguments.len, arg_t, help) ++ "\n",
+                .Variadic => self.arg_help ++ fmt.argumentHelpText(null, arg_t, help) ++ "\n",
+                else => self.arg_help,
+            };
+            return result;
+        }
     }
 
     /// the handler function should be added *after* any and all options/arguments are registered via the `option`, `flag` and `argument` handlers
     /// the handler's signature should start with a `Context` object, then follow the order of arguments/options registered to the command
-    pub inline fn handler(comptime self: Self, comptime handler_fn: self.handlerT()) Self {
-        if (self.handler_fn) |_| @compileError("handler function is already registered");
-        return Self{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser,
-            .handler_fn = &handler_fn,
-            .opt_help = self.opt_help,
-            .arg_help = self.arg_help,
-        };
+    pub inline fn handler(comptime self: Self, comptime handler_fn: self.handler_t()) Self {
+        comptime {
+            if (self.handler_fn) |_| @compileError("handler function is already registered");
+            var result = self;
+            result.handler_fn = &handler_fn;
+            return result;
+        }
     }
 
     /// an internal method used to run the command with prebuilt context & tokenizer
     /// enabled us to run this command from main or from a test
     pub fn invoke(comptime self: Self, ctx: context.Context, itr: tokenizer.Tokenizer) !void {
-        switch (self.parser.parse(itr)) {
+        switch (try self.parser.parse(ctx, itr)) {
             .result => |args| {
                 if (self.handler_fn) |handler_func| {
-                    const handler_f: self.handlerT() = @as(self.handlerPtrT(), @ptrCast(@alignCast(handler_func))).*;
-                    const params = util.prefixTuple(self.parser.t, context.Context, args, ctx);
+                    const handler_f: self.handler_t() = @as(self.handler_ptr_t(), @ptrCast(@alignCast(handler_func))).*;
+                    const params = util.prefixTuple(self.parser.t(), context.Context, args, ctx);
                     try @call(std.builtin.CallModifier.auto, handler_f, params);
                 }
             },

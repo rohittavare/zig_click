@@ -27,7 +27,7 @@ pub const MockedContext = struct {
 
         const env = try allocator.create(std.process.Environ.Map);
         env.* = .init(allocator);
-        inline for (env_vars) |pair| try env.put(pair.@"0", pair.@"1");
+        for (env_vars) |pair| try env.put(pair.@"0", pair.@"1");
 
         const stdin = try allocator.create(std.Io.Reader);
         stdin.* = .fixed(stdin_buf);
@@ -50,10 +50,10 @@ pub const MockedContext = struct {
         };
     }
 
-    pub fn getOutput(self: MockedContext, allocator: std.mem.Allocator) !struct { []const u8, []const u8 } {
+    pub fn getOutput(self: MockedContext) !struct { []const u8, []const u8 } {
         return .{
-            self.stdout_buf.toOwnedSlice(allocator),
-            self.stderr_buf.toOwnedSlice(allocator),
+            try self.stdout_buf.toOwnedSlice(),
+            try self.stderr_buf.toOwnedSlice(),
         };
     }
 
@@ -127,7 +127,7 @@ pub const Context = struct {
 
     /// register a value with the context
     pub fn put(self: Context, k: []const u8, v: anytype) !void {
-        try self.kv.put(k, util.toOpaquePtr(self.arena, v));
+        try self.kv.put(k, try util.toOpaquePtr(self.arena, v));
     }
 
     /// fetch a value stored in our context

@@ -51,7 +51,7 @@ pub inline fn Group(comptime name: []const u8, comptime description: []const u8)
     return GroupStruct{
         .name = name,
         .description = description,
-        .parser = parser.NonExhaustiveParser(),
+        .parser = .initNonExhaustive(),
         .command_idx = std.StaticStringMap(usize).initComptime(.{}),
         .commands = &.{},
     };
@@ -69,92 +69,76 @@ pub const GroupStruct = struct {
 
     const Self = @This();
 
-    inline fn handlerT(comptime self: Self) type {
-        return @Fn([_]type{context.Context} ++ @typeInfo(self.parser.t).@"struct".field_types, &@as([self.parser.n() + 1]std.builtin.Type.Fn.ParamAttributes, @splat(std.builtin.Type.Fn.ParamAttributes{})), anyerror!void, std.builtin.Type.Fn.Attributes{});
+    inline fn handler_t(comptime self: Self) type {
+        return @Fn([_]type{context.Context} ++ @typeInfo(self.parser.t()).@"struct".field_types, &@as([self.parser.n() + 1]std.builtin.Type.Fn.ParamAttributes, @splat(std.builtin.Type.Fn.ParamAttributes{})), anyerror!void, std.builtin.Type.Fn.Attributes{});
     }
-    inline fn handlerPtrT(comptime self: Self) type {
-        return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, self.handlerT(), null);
+    inline fn handler_ptr_t(comptime self: Self) type {
+        return @Pointer(std.builtin.Type.Pointer.Size.one, std.builtin.Type.Pointer.Attributes{ .@"const" = true }, self.handler_t(), null);
     }
 
     pub inline fn subcommand(comptime self: GroupStruct, comptime command_struct: cmd.CommandStruct) GroupStruct {
-        if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
-        if (self.command_idx.has(command_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ command_struct.name ++ "\"");
-        return GroupStruct{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser,
-            .command_idx = util.insertStaticStringMapComptime(usize, self.command_idx, .{ command_struct.name, self.commands.len }),
-            .commands = util.extendSliceComptime(CommandOrGroup, self.commands, CommandOrGroup.init(command_struct)),
-            .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help,
-        };
+        comptime {
+            if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
+            if (self.command_idx.has(command_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ command_struct.name ++ "\"");
+            var result = self;
+            result.command_idx = util.insertStaticStringMapComptime(usize, self.command_idx, .{ command_struct.name, self.commands.len });
+            result.commands = util.extendSliceComptime(CommandOrGroup, self.commands, CommandOrGroup.init(command_struct));
+            return result;
+        }
     }
 
     // maybe we should have a single method for adding both commands and groups?
     pub inline fn subgroup(comptime self: GroupStruct, comptime group_struct: GroupStruct) GroupStruct {
-        if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
-        if (self.command_idx.has(group_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ group_struct.name ++ "\"");
-        return GroupStruct{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser,
-            .command_idx = util.insertStaticStringMapComptime(usize, self.command_idx, .{ group_struct.name, self.commands.len }),
-            .commands = util.extendSliceComptime(CommandOrGroup, self.commands, CommandOrGroup.init(group_struct)),
-            .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help,
-        };
+        comptime {
+            if (self.handler_fn) |_| @compileError("please add arguments before registering the handler function");
+            if (self.command_idx.has(group_struct.name)) @compileError("already registered subcommand/subgroup of name \"" ++ group_struct.name ++ "\"");
+            var result = self;
+            result.command_idx = util.insertStaticStringMapComptime(usize, self.command_idx, .{ group_struct.name, self.commands.len });
+            result.commands = util.extendSliceComptime(CommandOrGroup, self.commands, CommandOrGroup.init(group_struct));
+            return result;
+        }
     }
 
-    pub inline fn option(comptime self: Self, comptime declaration: []const u8, comptime opT: type, comptime def: opT, comptime help: []const u8) Self {
-        if (self.handler_fn) |_| @compileError("please add options before registering the handler function");
-        return GroupStruct{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser.addOption(declaration, opT, def),
-            .command_idx = self.command_idx,
-            .commands = self.commands,
-            .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help ++ fmt.optionHelpText(declaration, opT, help) ++ "\n",
-        };
+    pub inline fn option(comptime self: Self, comptime op_t: type, comptime help: []const u8, comptime cfg: parser.OptionConfig(op_t)) Self {
+        comptime {
+            if (self.handler_fn) |_| @compileError("please add options before registering the handler function");
+            var result = self;
+            result.parser = self.parser.addOption(op_t, cfg);
+            result.opt_help = self.opt_help ++ fmt.optionHelpText(cfg.long, cfg.short, op_t, help) ++ "\n";
+            return result;
+        }
     }
 
-    pub inline fn flag(comptime self: Self, comptime declaration: []const u8, comptime help: []const u8) Self {
-        if (self.handler_fn) |_| @compileError("please add flags before registering the handler function");
-        return GroupStruct{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser.addFlag(declaration),
-            .command_idx = self.command_idx,
-            .commands = self.commands,
-            .handler_fn = self.handler_fn,
-            .opt_help = self.opt_help ++ fmt.flagHelpText(declaration, help) ++ "\n",
-        };
+    pub inline fn flag(comptime self: Self, comptime help: []const u8, comptime cfg: parser.FlagConfig) Self {
+        comptime {
+            if (self.handler_fn) |_| @compileError("please add flags before registering the handler function");
+            var result = self;
+            result.parser = self.parser.addFlag(cfg);
+            result.opt_help = self.opt_help ++ fmt.flagHelpText(cfg.long, cfg.short, help) ++ "\n";
+            return result;
+        }
     }
 
-    pub inline fn handler(comptime self: GroupStruct, comptime handler_fn: self.handlerT()) GroupStruct {
-        if (self.handler_fn) |_| @compileError("handler function is already registered");
-        return GroupStruct{
-            .name = self.name,
-            .description = self.description,
-            .parser = self.parser,
-            .command_idx = self.command_idx,
-            .commands = self.commands,
-            .handler_fn = &handler_fn,
-            .opt_help = self.opt_help,
-        };
+    pub inline fn handler(comptime self: GroupStruct, comptime handler_fn: self.handler_t()) GroupStruct {
+        comptime {
+            if (self.handler_fn) |_| @compileError("handler function is already registered");
+            var result = self;
+            result.handler_fn = &handler_fn;
+            return result;
+        }
     }
 
     pub fn invoke(comptime self: GroupStruct, ctx: context.Context, itr: tokenizer.Tokenizer) !void {
         if (self.commands.len == 0) @compileError("attempting to invoke command group '" ++ self.name ++ "' without any subcommands registered");
         var chosen_cmd: [self.commands.len]bool = @splat(false);
-        const prsr = self.parser.addArgument([]const u8);
-        switch (prsr.parse(itr)) {
+        const prsr = self.parser.addArgument([]const u8, .{});
+        switch (try prsr.parse(ctx, itr)) {
             .result => |result| {
                 const cmd_name: []const u8 = @field(result, @typeInfo(@TypeOf(result)).@"struct".field_names[self.parser.n()]);
                 if (self.command_idx.get(cmd_name)) |cmd_idx| {
                     if (self.handler_fn) |opaque_handler_fn| {
-                        const handler_fn = @as(self.handlerPtrT(), @ptrCast(@alignCast(opaque_handler_fn))).*;
-                        const params = util.prefixTuple(self.parser.t, context.Context, util.truncateTuple(prsr.t, result), ctx);
+                        const handler_fn = @as(self.handler_ptr_t(), @ptrCast(@alignCast(opaque_handler_fn))).*;
+                        const params = util.prefixTuple(self.parser.t(), context.Context, util.truncateTuple(prsr.t(), result), ctx);
                         try @call(.auto, handler_fn, params);
                     }
                     chosen_cmd[cmd_idx] = true;
@@ -168,8 +152,12 @@ pub const GroupStruct = struct {
                 }
             },
             .err => |err| switch (err) {
-                .MissingPositionalArgument => {
-                    try ctx.stderr.print("error: please specify a subcommand\n", .{});
+                .MissingPositionalArgument => |i| {
+                    if (i == self.parser.arguments.len) {
+                        try ctx.stderr.print("error: please specify a subcommand\n", .{});
+                    } else {
+                        try err.print(ctx.stderr);
+                    }
                     try ctx.stderr.print("Try using '--help' to show more information\n", .{});
                     try ctx.stderr.flush();
                 },

@@ -68,12 +68,12 @@ pub const CliRunner = struct {
         var itr = try tokenizer.StringIterator.init(allocator, cfg.args);
         defer itr.deinit(allocator);
 
-        const ctx: context.MockedContext = try .init(io, allocator, cfg.env, cfg.stdin);
+        const ctx: context.MockedContext = try .init(io, allocator, cfg.stdin, cfg.env);
         defer ctx.deinit();
 
         const result = self.command_or_group.invoke(ctx.context(), itr.asTokenizer());
 
-        const stdout, const stderr = try ctx.getOutput(allocator);
+        const stdout, const stderr = try ctx.getOutput();
         var ret = RunResult{
             .allocator = &allocator,
             .stdout = stdout,
@@ -105,9 +105,9 @@ const outputStream = enum {
 };
 
 const echoTestCommand = command.Command("echo_test_command", "basic test command to print out data received by the handler")
-    .option("--print-to", outputStream, outputStream.stdout, "which stream to output to")
-    .option("--echo-me,-e", ?[]const u8, null, "echo the contents of this flag's arguments")
-    .argument([]const u8, "command line contents to echo")
+    .option(outputStream, "which stream to output to", .{ .long = "--print-to", .default = outputStream.stdout })
+    .option(?[]const u8, "echo the contents of this flag's arguments", .{ .long = "--echo-me", .short = "-e" })
+    .argument([]const u8, "command line contents to echo", .{})
     .handler(handler);
 
 fn handler(ctx: context.Context, print_to: outputStream, echo_opn: ?[]const u8, echo_arg: []const u8) !void {
@@ -214,7 +214,7 @@ test "command_runner_env" {
 }
 
 const foo_cmd = command.Command("foo", "echos argument prepended with 'foo'")
-    .argument([]const u8, "contents to echo")
+    .argument([]const u8, "contents to echo", .{})
     .handler(foo);
 fn foo(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("foo {s}", .{arg});
@@ -222,7 +222,7 @@ fn foo(ctx: context.Context, arg: []const u8) !void {
 }
 
 const bar_cmd = command.Command("bar", "echos argument prepended with 'bar'")
-    .argument([]const u8, "contents to echo")
+    .argument([]const u8, "contents to echo", .{})
     .handler(bar);
 fn bar(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("bar {s}", .{arg});
@@ -230,7 +230,7 @@ fn bar(ctx: context.Context, arg: []const u8) !void {
 }
 
 const baz_cmd = command.Command("baz", "echos argument prepended with 'baz'")
-    .argument([]const u8, "contents to echo")
+    .argument([]const u8, "contents to echo", .{})
     .handler(baz);
 fn baz(ctx: context.Context, arg: []const u8) !void {
     try ctx.stdout.print("baz {s}", .{arg});
@@ -306,7 +306,7 @@ test "command_group" {
 }
 
 const PrintsContextValue = command.Command("print-ctx", "prints the value help by specified keys in the shared CLI context")
-    .argument([]const u8, "the name of the key to lookup")
+    .argument([]const u8, "the name of the key to lookup", .{})
     .handler(printContext);
 
 fn printContext(ctx: context.Context, k: []const u8) !void {
@@ -319,7 +319,7 @@ fn printContext(ctx: context.Context, k: []const u8) !void {
 }
 
 const ContextCommandGroup = group.Group("ctx-group", "a command group which persists values to subcommands via the shared context")
-    .option("--foo", ?[]const u8, null, "writes the provided value to key 'foo' in the context")
+    .option(?[]const u8, "writes the provided value to key 'foo' in the context", .{ .long = "--foo" })
     .subcommand(PrintsContextValue)
     .handler(setContext);
 

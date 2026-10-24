@@ -434,10 +434,6 @@ pub fn ArgumentConfig(comptime arg_t: type) type {
     return struct {
         /// determines the argument's parsing behavior. see `ArgumentKind` for more info
         kind: ArgumentKind = .Positional,
-        /// a descriptive string for understanding argument usage
-        ///
-        /// not applicable for passthrough arguments
-        help: []const u8 = "",
         /// function used to parse raw tokens into the intended argument type e.g. to perform validation, post-processing, deserialize complex structures
         ///
         /// not applicable for passthrough arguments
@@ -473,8 +469,6 @@ pub fn OptionConfig(comptime op_t: type) type {
         ///
         /// not applicable for variadic options
         default: ?op_t = null,
-        /// a descriptive string for understanding option usage
-        help: []const u8 = "",
         /// function used to parse raw tokens into the intended type e.g. to perform validation, post-processing, deserialize complex structures
         handler: ?arg_handler_t(op_t) = null,
         /// whether to accept arbitrarily many values.
@@ -501,8 +495,6 @@ pub const FlagConfig = struct {
     /// optionally include a *negative* flag separated by forward slash (`/`) for boolean options to represent the `false` value
     /// e.g. `-y/-n`
     short: ?[]const u8 = null,
-    /// a descriptive string for understanding option usage
-    help: []const u8 = "",
 };
 /// Determines the behavior fo non-argumentative options
 pub const FlagKind = enum {
