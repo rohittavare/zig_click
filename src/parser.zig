@@ -594,9 +594,9 @@ const Field = union(enum) {
                 // our return type should be a slice. This is achieved by construct a list in our target type, then generating an owned slice
                 // we iterate over each captured token/value and convert it to the expected type, or returning an error
                 var values: std.ArrayList(info.t) = .empty;
-                defer values.deinit(ctx.gpa);
-                for (capture_group.variadic.items) |capture| try values.append(capture.as(ctx.gpa, try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_handler_t(info.t), info.handler)) orelse return .{ .err = capture.invalidArgument() }));
-                return .{ .result = values.toOwnedSlice(ctx.arena.allocator()) };
+                defer values.deinit(ctx.arena.allocator());
+                for (capture_group.variadic.items) |capture| try values.append(ctx.arena.allocator(), try capture.as(info.t, ctx, util.fromOpaquePtrMaybe(arg_handler_t(info.t), info.handler)) orelse return .{ .err = capture.invalidArgument() });
+                return .{ .result = try values.toOwnedSlice(ctx.arena.allocator()) };
             },
             // or just count how many uses we found
             .count => return .{ .result = capture_group.count.items.len },
@@ -837,7 +837,7 @@ pub const Parser = struct {
                         .optional => if (cfg.default) |_| @compileError("options with default values should be changed to non-optional type"),
                         else => if (cfg.default == null) @compileError("non-optional types require a default value, or should be changed to an optional type"),
                     }
-                    break :resolve_field .initScalar(op_t, cfg.default, cfg.handler);
+                    break :resolve_field .initScalar(op_t, cfg.default orelse @as(op_t, null), cfg.handler);
                 }
             };
             result.fields = util.extendSliceComptime(Field, result.fields, field);
@@ -924,7 +924,16 @@ pub const Parser = struct {
                 // special `--` argument - use it to indicate passthrough
                 // if we have additional args to process (`arg_idx` doesn't point to a passthrough arg)
                 // then just ignore and continue normal behavior
-                if (arg_idx < self.arguments.len and self.arguments[arg_idx].kind == .Passthrough) passthrough = true;
+                if (arg_idx < self.arguments.len) {
+                    switch (self.arguments[arg_idx].kind) {
+                        .Passthrough => passthrough = true,
+                        .Variadic => if (arg_idx < self.arguments.len - 1) {
+                            arg_idx += 1;
+                            passthrough = true;
+                        },
+                        else => {},
+                    }
+                }
             } else if (std.mem.startsWith(u8, token, "--")) {
                 // long flag - unpack flag name & value
                 const flag_name, const maybe_value = unpackLongFlagToken(token).?;
@@ -973,7 +982,7 @@ pub const Parser = struct {
                 const ptr = self.arguments[arg_idx];
                 const src: Field.FieldCaptureGroup.CommandLineSource = if (ptr.kind == .Command) .initCommand() else .init(arg_idx);
                 try capture_groups[ptr.field_idx].accept(ctx.gpa, src, .initToken(value));
-                arg_idx += 1;
+                if (ptr.kind != .Variadic) arg_idx += 1;
                 if (!self.exhaustive and arg_idx == self.arguments.len) break;
             }
         }
@@ -1018,22 +1027,21 @@ fn charToIdx(c: u8) ?usize {
 
 // success test cases:
 // - [x] parsing each data type
-// - [ ] parsing choices
-// - [ ] parsing via custom handler
-// - [ ] arguments
+// - [x] parsing via custom handler
+// - [x] arguments
 //   - [x] handling multiple positional arguments
-//   - [ ] passthrough args
-//   - [ ] variadic args
-//   - [ ] command name arg
+//   - [x] passthrough args
+//   - [x] variadic args
+//   - [x] command name arg
 // - [x] long flags
 //   - [x] separate & joined values
-//   - [ ] variadic options
-//   - [ ] count flags
+//   - [x] variadic options
+//   - [x] count flags
 // - [x] short flags
 //   - [x] multiple flags expressed separately & together
 //   - [x] separate and joined flag values
-//   - [ ] variadic options
-//   - [ ] count flags
+//   - [x] variadic options
+//   - [x] count flags
 // - [x] handling positive & negative bool flags
 // - [x] default values
 // - [x] no-exhaust setting
@@ -1070,10 +1078,68 @@ test "arg_parser_ignore_token" {
     const ctx: context.MockedContext = try .initTest("", .{});
     defer ctx.deinit();
 
-    // bool, optional, string, int, float
     const parser = Parser.initExhaustive().addArgument([]const u8, .{});
 
     const expected: parser.t() = .{"hello world"};
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
+}
+
+test "arg_parser_passthrough_arg" {
+    const allocator = std.testing.allocator;
+    var itr = try tokenizer.StringIterator.init(allocator, "-- --long-flag \"hello world\"");
+    defer itr.deinit(allocator);
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive().addOption(?[]const u8, .{ .long = "--long-flag" }).addArgument([]const u8, .{ .kind = .Passthrough });
+
+    const expected: parser.t() = .{ null, &.{ "--long-flag", "hello world" } };
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
+}
+
+test "arg_parser_variadic_arg" {
+    const allocator = std.testing.allocator;
+    var itr = try tokenizer.StringIterator.init(allocator, "foo --long-flag \"hello world\" bar baz");
+    defer itr.deinit(allocator);
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive().addOption(?[]const u8, .{ .long = "--long-flag" }).addArgument([]const u8, .{ .kind = .Variadic });
+
+    const expected: parser.t() = .{ "hello world", &.{ "foo", "bar", "baz" } };
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
+}
+
+test "arg_parser_variadic_arg_omitted" {
+    const allocator = std.testing.allocator;
+    var itr = try tokenizer.StringIterator.init(allocator, "--long-flag \"hello world\"");
+    defer itr.deinit(allocator);
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive().addOption(?[]const u8, .{ .long = "--long-flag" }).addArgument([]const u8, .{ .kind = .Variadic });
+
+    const expected: parser.t() = .{ "hello world", &.{} };
+    try std.testing.expectEqualDeep(ParserResult(parser.t()){ .result = expected }, (try parser.parse(ctx.context(), itr.asTokenizer())));
+}
+
+test "arg_parser_variadic_and_passthrough_arg" {
+    const allocator = std.testing.allocator;
+    var itr = try tokenizer.StringIterator.init(allocator, "foo --long-flag \"hello world\" bar baz -- this is for passthrough");
+    defer itr.deinit(allocator);
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive()
+        .addOption(?[]const u8, .{ .long = "--long-flag" })
+        .addArgument([]const u8, .{ .kind = .Variadic })
+        .addArgument([]const u8, .{ .kind = .Passthrough });
+
+    const expected: parser.t() = .{ "hello world", &.{ "foo", "bar", "baz" }, &.{ "this", "is", "for", "passthrough" } };
     try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
 }
 
@@ -1118,6 +1184,72 @@ test "arg_parser_option_arg" {
     try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr2.asTokenizer())).result);
     try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr3.asTokenizer())).result);
     try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr4.asTokenizer())).result);
+}
+
+test "arg_parser_custom_handler" {
+    const allocator = std.testing.allocator;
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive()
+        .addOption([]const []const u8, .{ .long = "--long-flag", .default = &.{}, .handler = &split_str })
+        .addArgument([]const []const u8, .{ .handler = &split_str });
+
+    // test separate & conjoined value cases
+    // boolean long flags tested in different case
+    var itr = try tokenizer.StringIterator.init(allocator, "--long-flag foo,bar,baz hello,world");
+    defer itr.deinit(allocator);
+
+    const expected: parser.t() = .{ &.{ "foo", "bar", "baz" }, &.{ "hello", "world" } };
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
+}
+
+test "arg_parser_variadic_option_arg" {
+    const allocator = std.testing.allocator;
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive().addOption(usize, .{ .long = "--long-flag", .short = "-l", .variadic = true });
+
+    // test separate & conjoined value cases
+    // boolean long flags tested in different case
+    var itr = try tokenizer.StringIterator.init(allocator, "--long-flag 1 --long-flag=2 -l 3 -l4");
+    defer itr.deinit(allocator);
+    const expected: parser.t() = .{&.{ 1, 2, 3, 4 }};
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
+}
+
+test "arg_parser_count_flag" {
+    const allocator = std.testing.allocator;
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive().addFlag(.{ .kind = .Count, .long = "--amaze", .short = "-v" });
+
+    var itr1 = try tokenizer.StringIterator.init(allocator, "--amaze --amaze --amaze");
+    defer itr1.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "-vvv");
+    defer itr2.deinit(allocator);
+    const expected: parser.t() = .{3};
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr1.asTokenizer())).result);
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr2.asTokenizer())).result);
+}
+
+test "arg_parser_count_flag_omitted" {
+    const allocator = std.testing.allocator;
+
+    const ctx: context.MockedContext = try .initTest("", .{});
+    defer ctx.deinit();
+
+    const parser = Parser.initExhaustive().addFlag(.{ .kind = .Count, .long = "--amaze", .short = "-v" });
+
+    var itr = try tokenizer.StringIterator.init(allocator, "");
+    defer itr.deinit(allocator);
+    const expected: parser.t() = .{0};
+    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).result);
 }
 
 test "arg_parser_multi_short_flag" {
@@ -1180,7 +1312,7 @@ test "arg_parser_no_exhaust" {
     const ctx: context.MockedContext = try .initTest("", .{});
     defer ctx.deinit();
 
-    const parser = Parser.initNonExhaustive().addFlag(.{ .short = "-y" }).addArgument([]const u8, .{});
+    const parser = Parser.initNonExhaustive().addFlag(.{ .short = "-y" }).addArgument([]const u8, .{ .kind = .Command });
 
     // even when exhast is off, we expect the option to populate because it appears before the argument
     var itr1 = try tokenizer.StringIterator.init(allocator, "\"hello world\" -y");
@@ -1196,25 +1328,22 @@ test "arg_parser_no_exhaust" {
 }
 
 // error test cases:
-// - [ ] arguments
+// - [x] arguments
 //   - [x] missing positional argument
 //   - [x] extra positional argument
-//   - [ ] missing command name argument
-// - [ ] long flags
+// - [x] long flags
 //   - [x] unrecognized flag
 //   - [x] argument for boolean flag
-//   - [ ] argument for count flag
+//   - [x] argument for count flag
 //   - [x] missing argument
 // - [x] short flags
 //   - [x] invalid flag
 //   - [x] unrecognized flag
 //   - [x] missing argument
-// - [ ] type parsing failure
+// - [x] type parsing failure
 //   - [x] positional arguments
 //   - [x] long flags
 //   - [x] short flags
-//   - [ ] choice failure
-//   - [ ] handler failure
 
 test "arg_parser_missing_pos_arg" {
     const allocator = std.testing.allocator;
@@ -1294,14 +1423,18 @@ test "arg_parser_unexpected_long_flag_arg" {
     const ctx: context.MockedContext = try .initTest("", .{});
     defer ctx.deinit();
 
-    const expected: ParserError = .{ .UnexpectedLongOptionArgument = .{ "value", "long-flag" } };
+    const parser = Parser.initExhaustive().addFlag(.{ .long = "--bool-flag" }).addFlag(.{ .long = "--count-flag", .kind = .Count });
 
-    const parser = Parser.initExhaustive().addFlag(.{ .long = "--long-flag", .short = "-l" });
+    var itr1 = try tokenizer.StringIterator.init(allocator, "--bool-flag=value");
+    defer itr1.deinit(allocator);
+    const expected1: ParserError = .{ .UnexpectedLongOptionArgument = .{ "value", "bool-flag" } };
 
-    var itr = try tokenizer.StringIterator.init(allocator, "--long-flag=value");
-    defer itr.deinit(allocator);
+    var itr2 = try tokenizer.StringIterator.init(allocator, "--count-flag=value");
+    defer itr2.deinit(allocator);
+    const expected2: ParserError = .{ .UnexpectedLongOptionArgument = .{ "value", "count-flag" } };
 
-    try std.testing.expectEqualDeep(expected, (try parser.parse(ctx.context(), itr.asTokenizer())).err);
+    try std.testing.expectEqualDeep(expected1, (try parser.parse(ctx.context(), itr1.asTokenizer())).err);
+    try std.testing.expectEqualDeep(expected2, (try parser.parse(ctx.context(), itr2.asTokenizer())).err);
 }
 
 test "arg_parser_invalid_short_flag" {
