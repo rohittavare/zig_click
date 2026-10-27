@@ -755,6 +755,7 @@ pub const Parser = struct {
         comptime {
             const idx = self.n();
             var result = self;
+            if (cfg.long == null and cfg.short == null) @compileError("Flags must specify either a short or long flag");
             switch (cfg.kind) {
                 .Boolean => {
                     result.fields = util.extendSliceComptime(Field, result.fields, Field.initScalar(.init(bool), false, null));
@@ -804,6 +805,7 @@ pub const Parser = struct {
     /// see `OptionConfig` for more information
     pub inline fn addOption(comptime self: Parser, comptime op_t: anytype, comptime cfg: OptionConfig(types.CliType.init(op_t).asRawType())) Parser {
         comptime {
+            if (cfg.long == null and cfg.short == null) @compileError("Options must specify either a short or long flag");
             const op_t_union: types.CliType = .init(op_t);
             const idx = self.n();
             var result = self;

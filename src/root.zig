@@ -16,7 +16,11 @@ const fmt = @import("fmt.zig");
 
 pub const Command = command.Command;
 pub const Group = group.Group;
+pub const Context = context.Context;
 pub const testing = cli_runner;
+
+pub const Types = types.Type;
+pub const hintedType = types.hintedType;
 
 test {
     _ = @import("cli_runner.zig");

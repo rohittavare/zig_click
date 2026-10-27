@@ -3,7 +3,6 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    _ = optimize;
 
     // It's also possible to define more custom flags to toggle optional features
     // of this build script using `b.option()`. All defined flags (including
@@ -17,30 +16,30 @@ pub fn build(b: *std.Build) void {
 
     // in the future we can use an executable target to run
     // sample scripts utilizing the `zig_click` library
-    //
-    // const exe = b.addExecutable(.{
-    //     .name = "zig_click",
-    //     .root_module = b.createModule(.{
-    //         .root_source_file = b.path("src/main.zig"),
-    //         .target = target,
-    //         .optimize = optimize,
-    //         .imports = &.{
-    //             .{ .name = "zig_click", .module = mod },
-    //         },
-    //     }),
-    // });
-    //
-    // b.installArtifact(exe);
-    //
-    // const run_step = b.step("run", "Run the app");
-    //
-    // const run_cmd = b.addRunArtifact(exe);
-    // run_step.dependOn(&run_cmd.step);
-    // run_cmd.step.dependOn(b.getInstallStep());
+
+    const exe = b.addExecutable(.{
+        .name = "zig_click",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig_click", .module = mod },
+            },
+        }),
+    });
+
+    b.installArtifact(exe);
+
+    const run_step = b.step("examples", "Run the examples script");
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_step.dependOn(&run_cmd.step);
+    run_cmd.step.dependOn(b.getInstallStep());
 
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
-    // run_cmd.addPassthruArgs(); <-- might be a good idea to implement into `zig_click`
+    run_cmd.addPassthruArgs();
 
     // Creates an executable that will run `test` blocks from the provided module.
     // Here `mod` needs to define a target, which is why earlier we made sure to

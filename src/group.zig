@@ -206,7 +206,8 @@ pub const GroupStruct = struct {
         var stderr = std.Io.File.stdout().writer(io, &stderr_buf);
         const stderr_writer = &stderr.interface;
 
-        const ctx = context.Context.initForProcess(init, stdin_reader, stdout_writer, stderr_writer);
+        const ctx = try context.Context.initForProcess(init, stdin_reader, stdout_writer, stderr_writer);
+        defer ctx.deinit();
 
         try self.invoke(ctx, tokenizer.Tokenizer{ .argsIterator = &args });
     }
